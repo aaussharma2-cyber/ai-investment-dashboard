@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified Investment Dashboard</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load React and ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Load Babel for JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Load Lucide icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Custom CSS for Inter font and general styling -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            background-color: #f3f4f6;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="root">
+        <!-- React App will be rendered here -->
+    </div>
+
+    <!-- Firebase SDK Imports (must use type="module" for ES imports) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Set Firestore log level for debugging
+        setLogLevel('Debug');
+
+        // Global variables provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' && __firebase_config ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // Expose configuration and service getters to the global scope
+        window.getFirebaseConfig = () => firebaseConfig;
+        window.getAppId = () => appId;
+        window.getInitialAuthToken = () => initialAuthToken;
+
+        if (Object.keys(firebaseConfig).length > 0) {
+            window.firebaseApp = initializeApp(firebaseConfig);
+            window.firestoreDb = getFirestore(window.firebaseApp);
+            window.firebaseAuth = getAuth(window.firebaseApp);
+        } else {
+            console.error("Firebase configuration is missing or invalid.");
+            window.firestoreDb = null;
+            window.firebaseAuth = null;
+        }
+    </script>
+
+    <!-- React/Babel Code (Type="text/babel") -->
+    <script type="text/babel">
+        // Global variables will be accessed via window.getters()
+
+        const { useState, useEffect, useMemo, useCallback } = React;
+        const { createRoot } = ReactDOM;
+
+        // Custom function to safely get Firebase services initialized in the module script
+        const getFirebaseServices = () => ({
+            db: window.firestoreDb,
+            auth: window.firebaseAuth,
+            appId: window.getAppId(),
+            initialAuthToken: window.getInitialAuthToken(),
+        });
+        
+        // Re-export Lucide components for use in JSX
+        const { CreditCard, Zap, Server, Lock, Loader2, X, AlertTriangle, Plus, Tornado, Volume2, Link } = lucide;
+        
+        // --- MOCK DATA (Will be overwritten by live data) ---
+        const MOCK_INVESTMENTS = [
+            { id: '1', name: 'Bitcoin', symbol: 'BTC', quantity: 0.5, value: 35000, source: 'Binance', type: 'Crypto' },
+            { id: '2', name: 'Ethereum', symbol: 'ETH', quantity: 3.2, value: 6400, source: 'CoinSpot', type: 'Crypto' },
+            { id: '3', name: 'Apple Inc.', symbol: 'AAPL', quantity: 15, value: 2700, source: 'Stake', type: 'Equities' },
+            { id: '4', name: 'Gold ETF', symbol: 'GLD', quantity: 25, value: 4750, source: 'eToro', type: 'Commodity' },
+        ];
+        
+        // --- COMPONENTS ---
+
+        const InvestmentCard = ({ investment }) => {
+            const { name, symbol, quantity, value, source, type } = investment;
+            // Simple mock gain/loss logic
+            const isPositive = (value - (quantity * 100)) > 0; 
+        
+            return (
+                <div className="bg-white p-5 rounded-xl shadow-lg hover:shadow-xl transition duration-300 transform hover:scale-[1.02] border border-gray-100">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <div className="text-xl font-bold text-gray-800 flex items-center">
+                                {type === 'Crypto' && <Zap className="w-5 h-5 text-yellow-500 mr-2" />}
+                                {type === 'Equities' && <CreditCard className="w-5 h-5 text-blue-500 mr-2" />}
+                                {name} <span className="text-sm font-medium text-gray-500 ml-2">({symbol})</span>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1">{source}</p>
+                        </div>
+                        <div className={`text-lg font-semibold ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                            ${value.toFixed(2)}
+                        </div>
+                    </div>
+                    <div className="mt-4 border-t border-gray-100 pt-3">
+                        <p className="text-sm text-gray-600">
+                            <span className="font-semibold">Quantity:</span> {quantity !== undefined ? quantity.toFixed(4) : 'N/A'}
+                        </p>
+                        <p className={`text-sm font-medium ${isPositive ? 'text-green-500' : 'text-red-500'} flex items-center mt-1`}>
+                            {isPositive ? '↑' : '↓'} Performance (Mock)
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+        
+        const ConnectAccountModal = ({ isOpen, onClose, onConnect }) => {
+            const [provider, setProvider] = useState('Binance');
+            const [apiKey, setApiKey] = useState('');
+            const [apiSecret, setApiSecret] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
+            const [error, setError] = useState(null);
+        
+            const handleProviderChange = (e) => {
+                setProvider(e.target.value);
+                setApiKey('');
+                setApiSecret('');
+                setError(null);
+            };
+        
+            const handleSubmit = async () => {
+                const isCrypto = ['Binance', 'CoinSpot'].includes(provider);
+                const isBrokerage = ['Stake', 'eToro'].includes(provider);
+
+                if (isCrypto && (!apiKey || !apiSecret)) {
+                    setError('Both API Key and Secret are required.');
+                    return;
+                }
+        
+                setIsLoading(true);
+                setError(null);
+        
+                try {
+                    // Pass the connection details to the parent handler
+                    await onConnect(provider, apiKey, apiSecret); 
+                    
+                    // Simulate API call delay for visual feedback
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                    
+                    onClose();
+                } catch (err) {
+                    console.error("Connection attempt failed:", err);
+                    setError("Connection failed. Check keys or try again later.");
+                } finally {
+                    setIsLoading(false);
+                    setApiKey('');
+                    setApiSecret('');
+                }
+            };
+        
+            if (!isOpen) return null;
+        
+            const isCrypto = ['Binance', 'CoinSpot'].includes(provider);
+            const isBrokerage = ['Stake', 'eToro'].includes(provider);
+        
+            return (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl">
+                        <div className="flex justify-between items-center border-b pb-3 mb-4">
+                            <h2 className="text-2xl font-bold text-gray-800">Connect New Account</h2>
+                            <button onClick={onClose} className="p-1 rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition">
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
+        
+                        <div className="mb-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Select Provider</label>
+                            <select
+                                value={provider}
+                                onChange={handleProviderChange}
+                                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition"
+                            >
+                                <option value="Binance">Binance (Crypto - Direct API)</option>
+                                <option value="CoinSpot">CoinSpot (Crypto - Direct API)</option>
+                                <option value="Stake">Stake (Brokerage - Aggregation Model)</option>
+                                <option value="eToro">eToro (Brokerage - Aggregation Model)</option>
+                            </select>
+                        </div>
+        
+                        {/* --- Direct API Key Input (for Crypto/Exchanges) --- */}
+                        {isCrypto && (
+                            <div className="space-y-4">
+                                <p className="text-sm text-yellow-600 bg-yellow-50 p-3 rounded-lg flex items-start">
+                                    <AlertTriangle className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0" />
+                                    Ensure your API key only has **Read-Only** permissions.
+                                </p>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                                    <input
+                                        type="text"
+                                        value={apiKey}
+                                        onChange={(e) => setApiKey(e.target.value)}
+                                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                                        placeholder="Enter API Key"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">API Secret</label>
+                                    <input
+                                        type="password"
+                                        value={apiSecret}
+                                        onChange={(e) => setApiSecret(e.target.value)}
+                                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                                        placeholder="Enter API Secret"
+                                    />
+                                </div>
+                            </div>
+                        )}
+        
+                        {/* --- Aggregation Model Explanation (for Brokerages) --- */}
+                        {isBrokerage && (
+                            <div className="space-y-4">
+                                 <p className="text-sm text-blue-600 bg-blue-50 p-3 rounded-lg flex items-start">
+                                    <Server className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0" />
+                                    {provider} requires a secure **Data Aggregator Model** connection (like Plaid), which protects your login credentials.
+                                </p>
+                                <div className="p-3 bg-gray-100 rounded-lg text-sm text-gray-600">
+                                    *In a live environment, clicking 'Connect' would launch the aggregator's secure login window.*
+                                </div>
+                            </div>
+                        )}
+        
+                        {error && (
+                            <p className="mt-4 text-red-500 text-sm p-2 bg-red-100 rounded-lg flex items-center">
+                                <AlertTriangle className="w-4 h-4 mr-1" />
+                                {error}
+                            </p>
+                        )}
+        
+                        <button
+                            onClick={handleSubmit}
+                            disabled={isLoading || (isCrypto && (!apiKey || !apiSecret))}
+                            className="w-full mt-6 bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 transition duration-300 disabled:bg-indigo-400 flex items-center justify-center"
+                        >
+                            {isLoading ? (
+                                <>
+                                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                                    Connecting Securely...
+                                </>
+                            ) : (
+                                `Connect ${provider} Account`
+                            )}
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+        
+        
+        // --- MAIN APPLICATION COMPONENT ---
+        
+        const App = () => {
+            const [db, setDb] = useState(null);
+            const [auth, setAuth] = useState(null);
+            const [appId, setAppId] = useState(null);
+            const [userId, setUserId] = useState(null);
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [investments, setInvestments] = useState(MOCK_INVESTMENTS);
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [lastSyncStatus, setLastSyncStatus] = useState("Initializing...");
+            
+            // LLM State
+            const [analysisResult, setAnalysisResult] = useState(null);
+            const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
+            const [audioUrl, setAudioUrl] = useState(null);
+            const [isTTSLoading, setIsTTSLoading] = useState(false);
+            const [ttsError, setTtsError] = useState(null);
+
+
+            // 1. Initialize Firebase and Authentication
+            useEffect(() => {
+                const services = getFirebaseServices();
+                if (!services.db || !services.auth) {
+                    setLastSyncStatus("Firebase Config Error.");
+                    return;
+                }
+        
+                setDb(services.db);
+                setAuth(services.auth);
+                setAppId(services.appId);
+        
+                // We must use dynamic imports for Firestore functions within the React scope
+                // to ensure the component is runnable in this Babel environment.
+                const { onAuthStateChanged } = window.getAuth(services.db.app);
+                
+                const unsubscribe = onAuthStateChanged(services.auth, async (user) => {
+                    // Dynamic imports for sign-in methods
+                    const { signInWithCustomToken, signInAnonymously } = window.getAuth(services.db.app);
+                    
+                    if (user) {
+                        setUserId(user.uid);
+                    } else {
+                        // Anonymous sign-in if no custom token is provided
+                        try {
+                            if (services.initialAuthToken) {
+                                await signInWithCustomToken(services.auth, services.initialAuthToken);
+                            } else {
+                                await signInAnonymously(services.auth);
+                            }
+                        } catch (error) {
+                            console.error("Firebase Sign-in Failed:", error);
+                        }
+                    }
+                    setIsAuthReady(true);
+                });
+        
+                return () => unsubscribe();
+            }, []);
+        
+            // 2. Real-time Firestore Data Subscription
+            useEffect(() => {
+                if (!isAuthReady || !userId || !db || !appId) return;
+        
+                // Dynamic imports for Firestore functions
+                const { onSnapshot, collection, query } = window.getFirestore(db.app);
+
+                console.log(`Subscribing to assets for user: ${userId}`);
+        
+                // The target collection path for private user data
+                const assetsCollectionPath = `artifacts/${appId}/users/${userId}/assets`;
+                const q = query(collection(db, assetsCollectionPath));
+        
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    if (snapshot.empty) {
+                        setLastSyncStatus("No live data found. Showing mock data.");
+                        // To allow the analysis to run on mock data, we don't clear the state here
+                        return;
+                    }
+        
+                    const liveInvestments = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data(),
+                    }));
+                    setInvestments(liveInvestments);
+                    setLastSyncStatus(`Live Data Synced: ${new Date().toLocaleTimeString()}`);
+                    console.log("Live investments loaded:", liveInvestments);
+        
+                }, (error) => {
+                    console.error("Error fetching live investments:", error);
+                    setLastSyncStatus("Error syncing data.");
+                });
+        
+                return () => unsubscribe();
+            }, [isAuthReady, userId, db, appId]);
+        
+        
+            // --- Core Connection Logic (Unchanged) ---
+            const handleConnectAccount = useCallback(async (provider, apiKey, apiSecret) => {
+                if (!db || !userId || !appId) {
+                    console.error("Database, User ID, or App ID not ready.");
+                    throw new Error("Initialization failed.");
+                }
+        
+                // Dynamic imports for Firestore functions
+                const { doc, setDoc, serverTimestamp } = window.getFirestore(db.app);
+                
+                const connectionData = {
+                    provider,
+                    apiKeyStub: apiKey ? apiKey.substring(0, 4) + '...' : 'N/A',
+                    isLinked: true,
+                    createdAt: serverTimestamp(),
+                    tokenReference: crypto.randomUUID(),
+                };
+        
+                // Simulated storage of the *reference* token in a 'connections' collection
+                const connectionDocRef = doc(db, `artifacts/${appId}/users/${userId}/connections`, provider);
+        
+                await setDoc(connectionDocRef, connectionData, { merge: true });
+        
+                if (provider === 'Binance') {
+                    const assetDocRef = doc(db, `artifacts/${appId}/users/${userId}/assets`, 'Binance-BTC-Mock');
+                    await setDoc(assetDocRef, {
+                        userId,
+                        source: 'Binance',
+                        name: 'Bitcoin (Live Mock)',
+                        symbol: 'BTC',
+                        quantity: 0.08,
+                        value: 5000,
+                        type: 'Crypto',
+                        lastSyncedAt: serverTimestamp(),
+                    }, { merge: true });
+                }
+        
+                console.log(`Connection established for ${provider}. Token reference saved.`);
+            }, [db, userId, appId]);
+
+            
+            // --- Gemini API Utilities ---
+            const callGeminiApi = async (url, payload, maxRetries = 3) => {
+                const apiKey = ""; 
+                const headers = { 'Content-Type': 'application/json' };
+                let lastError = null;
+
+                for (let attempt = 0; attempt < maxRetries; attempt++) {
+                    try {
+                        const response = await fetch(`${url}?key=${apiKey}`, {
+                            method: 'POST',
+                            headers: headers,
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!response.ok) {
+                            const errorBody = await response.text();
+                            throw new Error(`API Error: ${response.status} - ${errorBody}`);
+                        }
+
+                        return await response.json();
+                    } catch (error) {
+                        lastError = error;
+                        if (attempt < maxRetries - 1) {
+                            const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                        }
+                    }
+                }
+                throw lastError;
+            };
+
+            // 1. Portfolio Health Check (Text Generation with Grounding)
+            const runPortfolioHealthCheck = useCallback(async () => {
+                setIsAnalysisLoading(true);
+                setAnalysisResult(null);
+
+                const portfolioSummary = investments.map(inv => (
+                    `- ${inv.name} (${inv.symbol}): ${inv.quantity} units, Type: ${inv.type}, Source: ${inv.source}`
+                )).join('\n');
+
+                const systemPrompt = "You are a specialized investment analyst. Analyze the user's portfolio diversification based on the provided holdings. Provide a concise, bulleted summary of current strengths and two concrete suggestions for improvement based on current market trends (use Google Search for grounding). Do not use placeholders or disclaimers about mock data. Start directly with the analysis.";
+
+                const userQuery = `My current portfolio holdings are:\n\n${portfolioSummary}\n\nBased on this, please perform a quick health check.`;
+
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent`;
+                const payload = {
+                    contents: [{ parts: [{ text: userQuery }] }],
+                    tools: [{ "google_search": {} }], // Enable search grounding
+                    systemInstruction: { parts: [{ text: systemPrompt }] },
+                };
+
+                try {
+                    const result = await callGeminiApi(apiUrl, payload);
+                    const candidate = result.candidates?.[0];
+
+                    if (candidate && candidate.content?.parts?.[0]?.text) {
+                        const text = candidate.content.parts[0].text;
+                        let sources = [];
+                        const groundingMetadata = candidate.groundingMetadata;
+
+                        if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                            sources = groundingMetadata.groundingAttributions
+                                .map(attribution => ({
+                                    uri: attribution.web?.uri,
+                                    title: attribution.web?.title,
+                                }))
+                                .filter(source => source.uri && source.title);
+                        }
+                        setAnalysisResult({ text, sources });
+                    } else {
+                        setAnalysisResult({ text: "Error: Could not retrieve analysis from the model.", sources: [] });
+                    }
+                } catch (error) {
+                    console.error("Gemini API Analysis Error:", error);
+                    setAnalysisResult({ text: `An error occurred during the analysis: ${error.message}`, sources: [] });
+                } finally {
+                    setIsAnalysisLoading(false);
+                }
+            }, [investments]); 
+
+            // 2. Generate Investment Idea (Text-to-Speech)
+            const generateInvestmentIdea = useCallback(async () => {
+                setIsTTSLoading(true);
+                setAudioUrl(null);
+                setTtsError(null);
+                
+                // Clear analysis results to focus on audio
+                setAnalysisResult(null);
+
+                const ttsPrompt = "Say cheerfully and quickly: 'Based on your current mix, a high-growth sector to research is sustainable battery technology! Always consult your certified advisor before making investment decisions.'";
+
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`;
+                const payload = {
+                    contents: [{ parts: [{ text: ttsPrompt }] }],
+                    generationConfig: {
+                        responseModalities: ["AUDIO"],
+                        speechConfig: {
+                            multiSpeakerVoiceConfig: {
+                                speakerVoiceConfigs: [
+                                    { speaker: "assistant", voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } } }
+                                ]
+                            }
+                        }
+                    },
+                };
+
+                try {
+                    const result = await callGeminiApi(apiUrl, payload);
+                    const part = result?.candidates?.[0]?.content?.parts?.[0];
+                    const audioData = part?.inlineData?.data;
+                    const mimeType = part?.inlineData?.mimeType;
+
+                    if (audioData && mimeType && mimeType.startsWith("audio/L16")) {
+                        const rateMatch = mimeType.match(/rate=(\d+)/);
+                        const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 16000;
+                        
+                        const base64ToArrayBuffer = window.base64ToArrayBuffer;
+                        const pcmToWav = window.pcmToWav;
+
+                        const pcmData = base64ToArrayBuffer(audioData);
+                        const pcm16 = new Int16Array(pcmData);
+                        const wavBlob = pcmToWav(pcm16, sampleRate);
+                        const url = URL.createObjectURL(wavBlob);
+                        setAudioUrl(url);
+
+                        // Play the audio immediately after generation
+                        new Audio(url).play();
+
+                    } else {
+                        setTtsError("Error generating audio: Invalid response format.");
+                        console.error("TTS API Response Error:", part);
+                    }
+                } catch (error) {
+                    console.error("Gemini TTS API Error:", error);
+                    setTtsError(`TTS failed: ${error.message}`);
+                } finally {
+                    setIsTTSLoading(false);
+                }
+            }, []);
+        
+        
+            const totalPortfolioValue = useMemo(() => {
+                // Safely calculate total value, handling potential missing values
+                return investments.reduce((sum, item) => sum + (item.value || 0), 0);
+            }, [investments]);
+        
+            if (!isAuthReady) {
+                return (
+                    <div className="flex items-center justify-center min-h-screen bg-gray-50">
+                        <Loader2 className="w-8 h-8 mr-2 animate-spin text-indigo-600" />
+                        <span className="text-lg font-medium text-gray-700">Initializing Dashboard...</span>
+                    </div>
+                );
+            }
+        
+            return (
+                <div className="min-h-screen bg-gray-50 font-sans p-4 sm:p-8">
+                    <header className="mb-8">
+                        <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900">Unified Investment Dashboard</h1>
+                        <p className="text-gray-500 mt-1">Consolidated view for Crypto, Stocks, and more.</p>
+                        <div className="text-sm text-gray-400 mt-2 flex flex-wrap gap-x-4">
+                            <span>App ID: {appId || 'N/A'}</span>
+                            <span>User ID: {userId || 'N/A'}</span>
+                            <span className="text-green-600">Status: {lastSyncStatus}</span>
+                        </div>
+                    </header>
+        
+                    {/* Main Value and Action Block */}
+                    <div className="bg-white p-6 rounded-xl shadow-lg mb-8 border-l-4 border-indigo-500">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-4">
+                            <div className="mb-4 sm:mb-0">
+                                <p className="text-sm font-medium text-gray-500">Total Portfolio Value</p>
+                                <h2 className="text-4xl font-bold text-indigo-600 mt-1">
+                                    ${totalPortfolioValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </h2>
+                            </div>
+                            <button
+                                onClick={() => setIsModalOpen(true)}
+                                className="flex items-center bg-indigo-600 text-white px-4 py-2 rounded-full font-semibold text-sm shadow-md hover:bg-indigo-700 transition"
+                            >
+                                <Plus className="w-5 h-5 mr-1" />
+                                Connect Account
+                            </button>
+                        </div>
+                        
+                        {/* Gemini LLM Actions */}
+                        <div className="pt-4 border-t border-gray-100 flex flex-wrap gap-3">
+                            <button
+                                onClick={runPortfolioHealthCheck}
+                                disabled={isAnalysisLoading}
+                                className="flex items-center bg-green-500 text-white px-4 py-2 rounded-full font-semibold text-sm shadow-md hover:bg-green-600 transition disabled:bg-green-300"
+                            >
+                                {isAnalysisLoading ? (
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                ) : (
+                                    <>
+                                        <Tornado className="w-4 h-4 mr-2" />
+                                        Portfolio Health Check ✨
+                                    </>
+                                )}
+                            </button>
+                            <button
+                                onClick={generateInvestmentIdea}
+                                disabled={isTTSLoading}
+                                className="flex items-center bg-purple-500 text-white px-4 py-2 rounded-full font-semibold text-sm shadow-md hover:bg-purple-600 transition disabled:bg-purple-300"
+                            >
+                                {isTTSLoading ? (
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                ) : (
+                                    <>
+                                        <Volume2 className="w-4 h-4 mr-2" />
+                                        Investment Idea (Audio) ✨
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                        {ttsError && (
+                            <p className="mt-2 text-red-500 text-sm">{ttsError}</p>
+                        )}
+                        {audioUrl && !isTTSLoading && (
+                             <p className="mt-2 text-sm text-purple-600 flex items-center">
+                                <Volume2 className="w-4 h-4 mr-2" />
+                                Audio idea generated and playing!
+                            </p>
+                        )}
+                    </div>
+
+                    {/* Gemini Analysis Output Section */}
+                    {analysisResult && (
+                        <div className="mb-8 p-6 bg-yellow-50 border-l-4 border-yellow-400 rounded-xl shadow-md">
+                            <h3 className="text-xl font-bold text-yellow-800 flex items-center mb-3">
+                                <Tornado className="w-5 h-5 mr-2" />
+                                Portfolio Analysis Result
+                            </h3>
+                            <div className="prose text-gray-700 max-w-none whitespace-pre-wrap">
+                                {analysisResult.text}
+                            </div>
+                            {analysisResult.sources.length > 0 && (
+                                <div className="mt-4 border-t border-yellow-200 pt-3">
+                                    <p className="text-xs font-semibold text-yellow-700 mb-1">Sources:</p>
+                                    <ul className="text-xs space-y-1">
+                                        {analysisResult.sources.slice(0, 3).map((source, index) => (
+                                            <li key={index} className="flex items-center">
+                                                <Link className="w-3 h-3 mr-1 text-yellow-600" />
+                                                <a href={source.uri} target="_blank" rel="noopener noreferrer" className="text-yellow-700 hover:text-yellow-900 truncate" title={source.title}>
+                                                    {source.title}
+                                                </a>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                        </div>
+                    )}
+        
+                    {/* Investment Holdings Section */}
+                    <div className="mb-8">
+                        <h3 className="text-2xl font-semibold text-gray-800 mb-4">Current Holdings ({investments.length})</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                            {investments.map(inv => (
+                                <InvestmentCard key={inv.id} investment={inv} />
+                            ))}
+                        </div>
+                    </div>
+        
+                    {/* Connection Modal */}
+                    <ConnectAccountModal
+                        isOpen={isModalOpen}
+                        onClose={() => setIsModalOpen(false)}
+                        onConnect={handleConnectAccount}
+                    />
+        
+                    {/* Security Reminder */}
+                    <div className="mt-12 p-5 bg-red-50 border-l-4 border-red-400 rounded-xl shadow-inner">
+                        <div className="flex items-center">
+                            <Lock className="w-5 h-5 text-red-600 mr-2 flex-shrink-0" />
+                            <h4 className="text-lg font-semibold text-red-800">Security Note (For Deployment)</h4>
+                        </div>
+                        <p className="mt-2 text-sm text-red-700">
+                            As detailed in the **Integration Plan**, the API Key/Secret input in this frontend is only a *simulated* step. In a real deployment, these credentials must be immediately sent to a separate, secure **Backend Service** for encryption and storage—**never** stored directly in the user's browser or non-encrypted in Firestore.
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+        
+        // Helper function to dynamically grab Firebase methods from the global scope (required for this environment)
+        window.getAuth = (app) => {
+            return {
+                signInWithCustomToken: (auth, token) => window.firebaseAuth.signInWithCustomToken(auth, token),
+                signInAnonymously: (auth) => window.firebaseAuth.signInAnonymously(auth),
+                onAuthStateChanged: (auth, callback) => window.firebaseAuth.onAuthStateChanged(auth, callback),
+            }
+        };
+
+        window.getFirestore = (app) => {
+            // Since we cannot dynamically import every single Firestore function,
+            // we rely on the functions being available in the global scope via the module import.
+            // This is a common pattern for single-file environments.
+            return {
+                onSnapshot: (q, onNext, onError) => window.onSnapshot(q, onNext, onError),
+                collection: (db, path) => window.collection(db, path),
+                query: (collectionRef) => window.query(collectionRef),
+                doc: (db, path1, path2, path3) => window.doc(db, path1, path2, path3),
+                setDoc: (docRef, data, options) => window.setDoc(docRef, data, options),
+                serverTimestamp: () => window.serverTimestamp(),
+            };
+        };
+
+        // Initialize the app and mount the component
+        document.addEventListener('DOMContentLoaded', () => {
+            const container = document.getElementById('root');
+            if (container) {
+                const root = createRoot(container);
+                root.render(<App />);
+            } else {
+                console.error("Root element #root not found.");
+            }
+        });
+        
+    </script>
+    
+    <!-- We need to ensure the module-level Firestore functions and TTS helpers are globally accessible 
+         for the React/Babel script. They are attached to the window object here. -->
+    <script type="module">
+        import { onSnapshot, collection, query, doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        window.onSnapshot = onSnapshot;
+        window.collection = collection;
+        window.query = query;
+        window.doc = doc;
+        window.setDoc = setDoc;
+        window.serverTimestamp = serverTimestamp;
+
+        // --- TTS Helper Functions (PCM16 to WAV format) ---
+
+        const base64ToArrayBuffer = (base64) => {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        };
+
+        const pcmToWav = (pcm16, sampleRate) => {
+            const numChannels = 1;
+            const bitDepth = 16;
+            const byteRate = sampleRate * numChannels * (bitDepth / 8);
+            const blockAlign = numChannels * (bitDepth / 8);
+            const buffer = new ArrayBuffer(44 + pcm16.byteLength);
+            const view = new DataView(buffer);
+
+            let offset = 0;
+            const writeString = (str) => {
+                for (let i = 0; i < str.length; i++) {
+                    view.setUint8(offset++, str.charCodeAt(i));
+                }
+            };
+
+            // RIFF identifier
+            writeString('RIFF');
+            // File size (4 bytes)
+            view.setUint32(offset, 36 + pcm16.byteLength, true); offset += 4;
+            // Format (WAVE)
+            writeString('WAVE');
+            // Format chunk identifier (fmt )
+            writeString('fmt ');
+            // Format chunk size (16)
+            view.setUint32(offset, 16, true); offset += 4;
+            // Audio format (PCM = 1)
+            view.setUint16(offset, 1, true); offset += 2;
+            // Number of channels
+            view.setUint16(offset, numChannels, true); offset += 2;
+            // Sample rate
+            view.setUint32(offset, sampleRate, true); offset += 4;
+            // Byte rate
+            view.setUint32(offset, byteRate, true); offset += 4;
+            // Block align
+            view.setUint16(offset, blockAlign, true); offset += 2;
+            // Bit depth
+            view.setUint16(offset, bitDepth, true); offset += 2;
+            // Data chunk identifier (data)
+            writeString('data');
+            // Data chunk size
+            view.setUint32(offset, pcm16.byteLength, true); offset += 4;
+
+            // Write PCM data
+            new Int16Array(buffer, offset).set(pcm16);
+            
+            return new Blob([buffer], { type: 'audio/wav' });
+        };
+
+        window.base64ToArrayBuffer = base64ToArrayBuffer;
+        window.pcmToWav = pcmToWav;
+
+    </script>
+
+</body>
+</html>
