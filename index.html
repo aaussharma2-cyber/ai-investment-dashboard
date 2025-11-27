@@ -3,22 +3,35 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Investment Dashboard</title>
+    <title>AI Investment Dashboard MVP</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Custom CSS for font and general styling -->
+    <!-- Load D3.js for Charting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <!-- Custom CSS for font and dark theme -->
     <style>
         body {
             font-family: 'Inter', sans-serif;
             margin: 0;
-            background-color: #f4f7f9;
+            background-color: #0f172a; /* Slate 900 */
         }
         #root {
             display: flex;
             justify-content: center;
             align-items: flex-start;
             min-height: 100vh;
-            padding: 2rem 1rem;
+            padding: 1.5rem 0.5rem;
+        }
+        .chart-container {
+            width: 100%;
+            height: 300px;
+        }
+        /* Ensure the D3 chart lines/text are visible in dark mode */
+        .chart-container svg text {
+             fill: #9ca3af; /* gray-400 */
+        }
+        .chart-container svg .domain, .chart-container svg .tick line {
+            stroke: #374151; /* gray-700 */
         }
     </style>
     <!-- Load React, ReactDOM, and Babel -->
@@ -26,7 +39,6 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <!-- Load Lucide Icons -->
-    <!-- We load the icons here and let them process the DOM once, preventing conflicts -->
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
@@ -36,7 +48,7 @@
     </div>
 
     <!-- 
-        Firebase Initialization and Authentication (Standard Module) 
+        Firebase Initialization and Authentication 
     -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -49,12 +61,11 @@
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        window.authReady = false; // Global flag for React to watch
+        window.authReady = false; 
         window.userId = null;
 
         let auth, db; 
 
-        // Initialize Firebase
         if (Object.keys(firebaseConfig).length > 0) {
             const app = initializeApp(firebaseConfig);
             db = getFirestore(app);
@@ -71,16 +82,16 @@
                     }
                 } catch (error) {
                     console.error("Firebase Auth error:", error);
-                    window.authReady = true; // Still flag as ready even on error
+                    window.authReady = true; 
                 }
             }
 
             onAuthStateChanged(auth, (user) => {
                 if (user) {
                     window.userId = user.uid; 
-                    window.authReady = true; // Authentication successful
+                    window.authReady = true; 
                 } else {
-                    authenticate(); // Trigger sign-in if not signed in
+                    authenticate(); 
                 }
             });
         } else {
@@ -95,64 +106,243 @@
         Main Application Logic (React Component)
     -->
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
-        // Mock data for simulated exchange portfolios
-        const MOCK_PORTFOLIOS = {
-            'Binance': [
-                { asset: 'BTC', amount: 0.5, valueUSD: 35000 },
-                { asset: 'ETH', amount: 5.2, valueUSD: 16000 },
-                { asset: 'BNB', amount: 15, valueUSD: 7000 },
-            ],
-            'CoinSpot': [
-                { asset: 'ADA', amount: 1200, valueUSD: 800 },
-                { asset: 'DOT', amount: 450, valueUSD: 3200 },
-                { asset: 'XRP', amount: 5000, valueUSD: 2500 },
-            ]
+        // --- Mock Data ---
+        const MOCK_EXCHANGES = ['Binance', 'CoinSpot', 'Coinbase Pro', 'Kraken'];
+        const MOCK_ASSETS = ['BTC', 'ETH', 'BNB', 'ADA', 'DOT', 'XRP'];
+
+        const getMockPortfolio = (exchangeName) => {
+            if (exchangeName === 'Binance') return [
+                { asset: 'BTC', amount: 0.5, valueUSD: 35000, color: '#f7931a' },
+                { asset: 'ETH', amount: 5.2, valueUSD: 16000, color: '#627EEA' },
+                { asset: 'BNB', amount: 15, valueUSD: 7000, color: '#F3BA2F' },
+            ];
+            if (exchangeName === 'CoinSpot') return [
+                { asset: 'ADA', amount: 1200, valueUSD: 800, color: '#3cc8e0' },
+                { asset: 'DOT', amount: 450, valueUSD: 3200, color: '#e6007a' },
+                { asset: 'XRP', amount: 5000, valueUSD: 2500, color: '#00AEE4' },
+            ];
+            if (exchangeName === 'Coinbase Pro') return [
+                { asset: 'BTC', amount: 0.1, valueUSD: 7000, color: '#f7931a' },
+                { asset: 'ETH', amount: 1.0, valueUSD: 3100, color: '#627EEA' },
+            ];
+             if (exchangeName === 'Kraken') return [
+                { asset: 'XRP', amount: 2000, valueUSD: 1000, color: '#00AEE4' },
+            ];
+            return [];
         };
         
+        const SIMULATED_DATA = {
+            // Mock data points for the last 7 days (~$50,000 baseline)
+            historicPerformance: [
+                { date: '2025-11-20', value: 50000 },
+                { date: '2025-11-21', value: 51200 },
+                { date: '2025-11-22', value: 50500 },
+                { date: '2025-11-23', value: 53000 },
+                { date: '2025-11-24', value: 52800 },
+                { date: '2025-11-25', value: 54100 },
+                { date: '2025-11-26', value: 53950 },
+            ],
+            // Simulated real-time price comparison (bid/ask simulation)
+            priceComparison: {
+                'BTC': { Binance: 68500.50, CoinSpot: 68515.20, "Coinbase Pro": 68505.00, Kraken: 68510.10 },
+                'ETH': { Binance: 4200.10, CoinSpot: 4201.55, "Coinbase Pro": 4199.90, Kraken: 4202.00 },
+                'BNB': { Binance: 550.00, CoinSpot: 550.25, "Coinbase Pro": 550.15, Kraken: 550.30 }
+            }
+        };
+
         // --- Shared Components ---
+
+        // FIX: The Icon component must use a ref and useEffect to handle the external DOM manipulation 
+        // by the Lucide script, preventing React cleanup errors.
+        const Icon = ({ name, className }) => {
+            const iconRef = useRef(null);
+            
+            useEffect(() => {
+                const container = iconRef.current;
+                if (container && typeof lucide !== 'undefined') {
+                    // 1. Clear previous content (the old SVG) to handle re-renders
+                    container.innerHTML = '';
+                    
+                    // 2. Set the lucide attribute on the container
+                    container.setAttribute('data-lucide', name);
+                    
+                    // 3. Create the icon, passing the class to be applied to the SVG
+                    // We use the parent element's scope to ensure the single icon is created
+                    lucide.createIcons({
+                        attributes: { class: className },
+                        scope: container.parentElement
+                    });
+
+                    return () => {
+                        // Cleanup function: remove the generated SVG from the container
+                        container.innerHTML = '';
+                    };
+                }
+            }, [name, className]); 
+
+            // React manages the <span>. Lucide mutates its content.
+            // We apply an initial class for sizing/placement if needed, but the main styling is passed to the SVG via attributes.
+            return <span ref={iconRef} className={className} />;
+        };
 
         const MessageModal = ({ message, type, onClose }) => {
             if (!message) return null;
 
-            const baseStyle = "p-4 rounded-lg shadow-2xl text-white";
+            const baseStyle = "p-4 rounded-xl shadow-2xl text-white";
             const color = type === 'error' ? 'bg-red-600' : 'bg-blue-600';
 
             return (
-                <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
-                    <div className={`max-w-sm w-full ${baseStyle} ${color} relative`}>
-                        <p className="text-lg font-semibold mb-2">{type === 'error' ? 'Error' : 'Notification'}</p>
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-70 flex items-center justify-center z-50">
+                    <div className={`max-w-sm w-full ${baseStyle} ${color} relative transform transition-all scale-100`}>
+                        <p className="text-xl font-bold mb-2">{type === 'error' ? 'Error' : 'Notification'}</p>
                         <p>{message}</p>
                         <button
                             onClick={onClose}
-                            className="mt-4 w-full bg-white bg-opacity-20 hover:bg-opacity-30 transition font-bold py-2 px-4 rounded"
+                            className="mt-4 w-full bg-white bg-opacity-20 hover:bg-opacity-30 transition font-bold py-2 px-4 rounded-lg"
                         >
-                            Close
+                            Dismiss
                         </button>
                     </div>
                 </div>
             );
         };
         
-        // Stabilized Icon component: relies purely on the global Lucide script loaded in the <head>
-        const Icon = ({ name, className }) => {
-            return <i data-lucide={name} className={className} />;
-        };
+        // --- D3 Chart Component ---
+        const PortfolioChart = ({ data }) => {
+            const svgRef = useRef(null);
 
+            useEffect(() => {
+                if (!data || data.length === 0) return;
+
+                // Set up margins and dimensions
+                const margin = { top: 20, right: 30, bottom: 40, left: 60 };
+                // Calculate dimensions based on container width
+                const containerWidth = svgRef.current.parentElement.offsetWidth;
+                const width = containerWidth - margin.left - margin.right;
+                const height = 300 - margin.top - margin.bottom;
+
+                // Parse the date and sort the data
+                const parseDate = d3.timeParse("%Y-%m-%d");
+                const formattedData = data.map(d => ({
+                    date: parseDate(d.date),
+                    value: d.value
+                })).sort((a, b) => a.date - b.date);
+
+                // Clear previous chart
+                d3.select(svgRef.current).selectAll("*").remove();
+
+                // Create SVG container
+                const svg = d3.select(svgRef.current)
+                    .attr("width", width + margin.left + margin.right)
+                    .attr("height", height + margin.top + margin.bottom)
+                    .append("g")
+                    .attr("transform", `translate(${margin.left},${margin.top})`);
+
+                // Set up X and Y scales
+                const x = d3.scaleTime()
+                    .domain(d3.extent(formattedData, d => d.date))
+                    .range([0, width]);
+
+                const y = d3.scaleLinear()
+                    .domain([d3.min(formattedData, d => d.value) * 0.98, d3.max(formattedData, d => d.value) * 1.02])
+                    .range([height, 0]);
+
+                // Add X axis
+                svg.append("g")
+                    .attr("transform", `translate(0,${height})`)
+                    .call(d3.axisBottom(x).ticks(d3.timeDay.every(1)).tickFormat(d3.timeFormat("%b %d")))
+                    .attr("class", "text-gray-400")
+                    .call(g => g.select(".domain").attr("stroke", "#374151")); // Darker line
+
+                // Add Y axis
+                svg.append("g")
+                    .call(d3.axisLeft(y).tickFormat(d => `$${d3.format(".2s")(d)}`))
+                    .attr("class", "text-gray-400")
+                    .call(g => g.select(".domain").attr("stroke", "#374151"));
+
+                // Add the line
+                svg.append("path")
+                    .datum(formattedData)
+                    .attr("fill", "none")
+                    .attr("stroke", "#3b82f6") // Blue line
+                    .attr("stroke-width", 3)
+                    .attr("d", d3.line()
+                        .x(d => x(d.date))
+                        .y(d => y(d.value))
+                    );
+                
+                // Add area under the line
+                 svg.append("path")
+                    .datum(formattedData)
+                    .attr("fill", "url(#area-gradient)")
+                    .attr("d", d3.area()
+                        .x(d => x(d.date))
+                        .y0(height)
+                        .y1(d => y(d.value))
+                    );
+
+                // Gradient definition for the area
+                const defs = svg.append("defs");
+
+                const gradient = defs.append("linearGradient")
+                    .attr("id", "area-gradient")
+                    .attr("x1", "0%")
+                    .attr("y1", "0%")
+                    .attr("x2", "0%")
+                    .attr("y2", "100%");
+
+                gradient.append("stop")
+                    .attr("offset", "5%")
+                    .attr("stop-color", "#3b82f6") // Blue
+                    .attr("stop-opacity", 0.5);
+
+                gradient.append("stop")
+                    .attr("offset", "95%")
+                    .attr("stop-color", "#3b82f6")
+                    .attr("stop-opacity", 0.05);
+
+            }, [data]);
+
+            return (
+                <div className="chart-container overflow-hidden">
+                    <svg ref={svgRef} preserveAspectRatio="xMidYMid meet"></svg>
+                </div>
+            );
+        };
+        
         // --- Exchange Connection Modal (The "Popup") ---
 
-        const ConnectExchangeModal = ({ isVisible, onClose, onConnect, showMessage }) => {
-            const [selectedExchange, setSelectedExchange] = useState('Binance');
+        const ConnectExchangeModal = ({ isVisible, onClose, onConnect, showMessage, connectedExchanges }) => {
+            const [exchangeToConnect, setExchangeToConnect] = useState(MOCK_EXCHANGES[0]);
             const [apiKey, setApiKey] = useState('');
             const [apiSecret, setApiSecret] = useState('');
             const [isLoading, setIsLoading] = useState(false);
 
             if (!isVisible) return null;
+            
+            const availableExchanges = MOCK_EXCHANGES.filter(name => 
+                !connectedExchanges.some(e => e.name === name)
+            );
+
+            // Set default if the current selection is no longer available
+            useEffect(() => {
+                if (!availableExchanges.includes(exchangeToConnect) && availableExchanges.length > 0) {
+                    setExchangeToConnect(availableExchanges[0]);
+                } else if (availableExchanges.length === 0) {
+                    setExchangeToConnect(null);
+                }
+            }, [connectedExchanges]);
+            
 
             const handleConnect = () => {
                 if (!apiKey || !apiSecret) {
                     showMessage('Please enter both API Key and API Secret.', 'error');
+                    return;
+                }
+                if (!exchangeToConnect) {
+                    showMessage('All mock exchanges are already connected.', 'error');
                     return;
                 }
                 
@@ -160,8 +350,9 @@
 
                 // Simulate secure API call delay
                 setTimeout(() => {
-                    onConnect(selectedExchange, { apiKey, apiSecret, portfolio: MOCK_PORTFOLIOS[selectedExchange] });
-                    showMessage(`Successfully connected and fetched simulated data from ${selectedExchange}.`, 'info');
+                    const portfolioData = getMockPortfolio(exchangeToConnect);
+                    onConnect(exchangeToConnect, { apiKey, apiSecret, portfolio: portfolioData });
+                    showMessage(`Successfully connected and fetched simulated data from ${exchangeToConnect}.`, 'info');
                     
                     setIsLoading(false);
                     onClose();
@@ -172,62 +363,71 @@
             };
 
             return (
-                <div className="fixed inset-0 bg-gray-900 bg-opacity-70 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4 transform transition-all scale-100">
-                        <h3 className="text-2xl font-bold text-gray-800 flex items-center">
-                            <Icon name="plug-zap" className="w-6 h-6 mr-3 text-yellow-600" />
-                            Connect Cryptocurrency Exchange
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-80 flex items-center justify-center z-50 p-4">
+                    <div className="bg-gray-800 rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4 transform transition-all scale-100 border border-blue-700">
+                        <h3 className="text-2xl font-bold text-white flex items-center">
+                            <Icon name="plug-zap" className="w-6 h-6 mr-3 text-yellow-500" />
+                            Connect Exchange Account
                         </h3>
-                        <p className="text-gray-600 text-sm">
-                            **IMPORTANT:** Due to security and environment constraints, this connection is **simulated**. Do not enter real API keys.
+                        <p className="text-gray-400 text-sm">
+                            This is a simulated connection for the MVP. Do not enter real API keys.
                         </p>
                         
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Select Platform</label>
-                            <select
-                                value={selectedExchange}
-                                onChange={(e) => setSelectedExchange(e.target.value)}
-                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
-                            >
-                                <option>Binance</option>
-                                <option>CoinSpot</option>
-                            </select>
-                        </div>
-                        
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">API Key (Mock)</label>
-                            <input
-                                type="password"
-                                value={apiKey}
-                                onChange={(e) => setApiKey(e.target.value)}
-                                placeholder="Enter Simulated API Key"
-                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
-                            />
-                        </div>
+                        {availableExchanges.length > 0 ? (
+                            <>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-300 mb-1">Select Platform</label>
+                                    <select
+                                        value={exchangeToConnect || ''}
+                                        onChange={(e) => setExchangeToConnect(e.target.value)}
+                                        className="w-full p-3 bg-gray-700 text-white border border-gray-600 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
+                                    >
+                                        {availableExchanges.map(name => (
+                                            <option key={name} value={name}>{name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-300 mb-1">API Key (Mock)</label>
+                                    <input
+                                        type="password"
+                                        value={apiKey}
+                                        onChange={(e) => setApiKey(e.target.value)}
+                                        placeholder="Enter Simulated API Key"
+                                        className="w-full p-3 bg-gray-700 text-white border border-gray-600 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
+                                    />
+                                </div>
 
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">API Secret (Mock)</label>
-                            <input
-                                type="password"
-                                value={apiSecret}
-                                onChange={(e) => setApiSecret(e.target.value)}
-                                placeholder="Enter Simulated API Secret"
-                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
-                            />
-                        </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-300 mb-1">API Secret (Mock)</label>
+                                    <input
+                                        type="password"
+                                        value={apiSecret}
+                                        onChange={(e) => setApiSecret(e.target.value)}
+                                        placeholder="Enter Simulated API Secret"
+                                        className="w-full p-3 bg-gray-700 text-white border border-gray-600 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
+                                    />
+                                </div>
+                            </>
+                        ) : (
+                            <div className="text-center p-4 bg-gray-700 rounded-lg text-yellow-400 font-semibold">
+                                All mock exchanges are currently connected.
+                            </div>
+                        )}
 
                         <div className="flex justify-end space-x-3 pt-2">
                             <button
                                 onClick={onClose}
                                 disabled={isLoading}
-                                className="px-6 py-2 border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 transition disabled:opacity-50"
+                                className="px-6 py-2 border border-gray-600 text-gray-300 font-semibold rounded-lg hover:bg-gray-700 transition disabled:opacity-50"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleConnect}
-                                disabled={isLoading}
-                                className="px-6 py-2 bg-yellow-600 text-white font-semibold rounded-lg hover:bg-yellow-700 transition shadow-md disabled:opacity-50 flex items-center"
+                                disabled={isLoading || !exchangeToConnect}
+                                className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition shadow-md disabled:opacity-50 flex items-center"
                             >
                                 {isLoading ? (
                                     <>
@@ -244,62 +444,239 @@
             );
         };
 
-        // --- Portfolio Display Component ---
-
-        const PortfolioDisplay = ({ linkedExchanges }) => {
+        // --- Dashboard Tab Component ---
+        const DashboardTab = ({ linkedExchanges }) => {
             const allAssets = linkedExchanges.flatMap(e => e.data.portfolio);
-            if (allAssets.length === 0) {
+            const totalValue = allAssets.reduce((sum, asset) => sum + asset.valueUSD, 0);
+            
+            // Simulating 24h change and breakdown
+            const dailyChangeUSD = totalValue > 0 ? 1550.25 : 0; // Simulated positive change
+            const dailyChangePercent = totalValue > 0 ? (dailyChangeUSD / (totalValue > dailyChangeUSD ? totalValue - dailyChangeUSD : 1)) * 100 : 0;
+            const isGain = dailyChangeUSD >= 0;
+
+            const breakdown = allAssets.reduce((acc, asset) => {
+                acc[asset.asset] = (acc[asset.asset] || 0) + asset.valueUSD;
+                return acc;
+            }, {});
+
+            const sortedBreakdown = Object.entries(breakdown)
+                .map(([asset, valueUSD]) => {
+                    // Find a mock color for the asset
+                    const mockAsset = MOCK_EXCHANGES.map(e => getMockPortfolio(e))
+                        .flat()
+                        .find(a => a.asset === asset) || { color: '#6b7280' };
+                    
+                    return { asset, valueUSD, percentage: (valueUSD / totalValue) * 100, color: mockAsset.color };
+                })
+                .sort((a, b) => b.valueUSD - a.valueUSD);
+
+            return (
+                <div className="space-y-8">
+                    <div className="grid md:grid-cols-3 gap-6">
+                        {/* KPI 1: Total Portfolio Value */}
+                        <div className="p-5 bg-gray-800 rounded-xl shadow-xl border border-gray-700">
+                            <p className="text-gray-400 text-sm">Total Portfolio Value</p>
+                            <h3 className="text-3xl font-extrabold text-white mt-1">
+                                ${totalValue.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                            </h3>
+                            <div className={`mt-2 text-sm font-semibold flex items-center ${isGain ? 'text-green-400' : 'text-red-400'}`}>
+                                <Icon name={isGain ? "arrow-up-right" : "arrow-down-right"} className="w-4 h-4 mr-1" />
+                                {dailyChangePercent.toFixed(2)}% <span className="text-gray-500 ml-1"> (24h)</span>
+                            </div>
+                        </div>
+
+                        {/* KPI 2: Number of Assets */}
+                        <div className="p-5 bg-gray-800 rounded-xl shadow-xl border border-gray-700">
+                            <p className="text-gray-400 text-sm">Assets Managed</p>
+                            <h3 className="text-3xl font-extrabold text-white mt-1">
+                                {sortedBreakdown.length}
+                            </h3>
+                            <div className="mt-2 text-sm font-semibold text-blue-400 flex items-center">
+                                <Icon name="activity" className="w-4 h-4 mr-1" />
+                                Real-time Price Feeds
+                            </div>
+                        </div>
+
+                        {/* KPI 3: Linked Exchanges */}
+                        <div className="p-5 bg-gray-800 rounded-xl shadow-xl border border-gray-700">
+                            <p className="text-gray-400 text-sm">Linked Exchanges</p>
+                            <h3 className="text-3xl font-extrabold text-white mt-1">
+                                {linkedExchanges.length}
+                            </h3>
+                            <div className="mt-2 text-sm font-semibold text-yellow-400 flex items-center">
+                                <Icon name="shield-check" className="w-4 h-4 mr-1" />
+                                Secure API Keys (Simulated)
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Chart & Historic Performance */}
+                    <div className="p-6 bg-gray-800 rounded-xl shadow-xl border border-gray-700">
+                        <h3 className="text-xl font-bold text-white mb-4">Historic Performance (7 Days)</h3>
+                        {allAssets.length > 0 ? (
+                            <PortfolioChart data={SIMULATED_DATA.historicPerformance} />
+                        ) : (
+                            <div className="h-64 flex items-center justify-center text-gray-500">Connect exchanges to view performance chart.</div>
+                        )}
+                    </div>
+
+                    {/* Asset Breakdown */}
+                    <div className="p-6 bg-gray-800 rounded-xl shadow-xl border border-gray-700">
+                        <h3 className="text-xl font-bold text-white mb-4">Asset Portfolio Breakdown</h3>
+                        <table className="min-w-full divide-y divide-gray-700">
+                            <thead>
+                                <tr>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Asset</th>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Value (USD)</th>
+                                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">Weight</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-800">
+                                {sortedBreakdown.map((item) => (
+                                    <tr key={item.asset} className="hover:bg-gray-700 transition">
+                                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-white flex items-center">
+                                            <span className="w-2 h-2 rounded-full mr-2" style={{backgroundColor: item.color}}></span>
+                                            {item.asset}
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">
+                                            ${item.valueUSD.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
+                                            <span className="font-semibold text-blue-400">{item.percentage.toFixed(2)}%</span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        {sortedBreakdown.length === 0 && <p className="text-center py-4 text-gray-500">No assets found in linked exchanges.</p>}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Trade Tab Component ---
+        const TradeTab = ({ linkedExchanges, showMessage }) => {
+            const tradableAssets = MOCK_ASSETS.filter(asset => Object.keys(SIMULATED_DATA.priceComparison).includes(asset));
+            const [selectedAsset, setSelectedAsset] = useState(tradableAssets[0] || 'BTC');
+            const [tradeAmount, setTradeAmount] = useState(0.1);
+
+            const comparisonData = SIMULATED_DATA.priceComparison[selectedAsset] || {};
+            const availableExchanges = linkedExchanges.map(e => e.name).filter(name => Object.keys(comparisonData).includes(name));
+            
+            // Find the best price
+            const bestPriceEntry = availableExchanges.reduce((best, exchangeName) => {
+                const price = comparisonData[exchangeName];
+                if (price && (!best || price < best.price)) {
+                    return { exchange: exchangeName, price: price };
+                }
+                return best;
+            }, null);
+
+            const handlePlaceOrder = (exchangeName) => {
+                 if (tradeAmount <= 0) {
+                     showMessage('Trade amount must be greater than zero.', 'error');
+                     return;
+                 }
+                 const price = comparisonData[exchangeName];
+                 if (!price) {
+                     showMessage(`Trade failed: Price for ${selectedAsset} not available on ${exchangeName}.`, 'error');
+                     return;
+                 }
+                
+                showMessage(
+                    `SIMULATED ORDER placed on ${exchangeName}: Buy ${tradeAmount} ${selectedAsset} @ $${price.toLocaleString(undefined, {minimumFractionDigits: 2})}.`, 
+                    'info'
+                );
+            };
+
+            if (linkedExchanges.length === 0) {
                 return (
-                    <div className="text-center p-8 bg-gray-50 rounded-xl border border-dashed border-gray-300">
-                        <Icon name="cloud-off" className="w-8 h-8 mx-auto text-gray-400 mb-2" />
-                        <p className="text-gray-500">No exchange accounts linked yet.</p>
-                        <p className="text-sm text-gray-400">Use the "Connect Exchange" button to start fetching simulated data.</p>
+                    <div className="text-center p-12 bg-gray-800 rounded-xl border border-red-700 text-gray-400">
+                        <Icon name="link-off" className="w-10 h-10 mx-auto text-red-500 mb-4" />
+                        <h3 className="text-xl font-bold text-white mb-2">Connect Exchanges to Trade</h3>
+                        <p>You need to link at least one exchange account before placing trade orders.</p>
                     </div>
                 );
             }
 
-            const totalValue = allAssets.reduce((sum, asset) => sum + asset.valueUSD, 0);
-
             return (
-                <div className="p-6 bg-green-50 rounded-xl border border-green-200 shadow-inner">
-                    <h2 className="flex items-center text-2xl font-bold text-gray-700 mb-4">
-                        <Icon name="wallet" className="w-6 h-6 mr-3 text-green-600" />
-                        Consolidated Portfolio Overview
-                    </h2>
-                    <div className="bg-white p-4 rounded-lg shadow-md mb-4 flex justify-between items-center border-l-4 border-green-500">
-                        <span className="text-lg font-semibold text-gray-700">Total Portfolio Value:</span>
-                        <span className="text-3xl font-extrabold text-green-600">${totalValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                <div className="grid md:grid-cols-2 gap-8">
+                    {/* Left: Trade Input */}
+                    <div className="p-6 bg-gray-800 rounded-xl shadow-xl border border-blue-700 space-y-5">
+                        <h3 className="text-2xl font-bold text-white flex items-center mb-4">
+                            <Icon name="zap" className="w-6 h-6 mr-2 text-yellow-500" />
+                            Place Smart Trade Order
+                        </h3>
+
+                        {/* Asset Selector */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-300 mb-1">Select Asset</label>
+                            <select
+                                value={selectedAsset}
+                                onChange={(e) => setSelectedAsset(e.target.value)}
+                                className="w-full p-3 bg-gray-700 text-white border border-gray-600 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
+                            >
+                                {tradableAssets.map(asset => <option key={asset}>{asset}</option>)}
+                            </select>
+                        </div>
+
+                        {/* Amount Input */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-300 mb-1">Amount to Buy ({selectedAsset})</label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                min="0.01"
+                                value={tradeAmount}
+                                onChange={(e) => setTradeAmount(parseFloat(e.target.value))}
+                                className="w-full p-3 bg-gray-700 text-white border border-gray-600 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
+                            />
+                        </div>
+                        
+                        {/* Best Price Summary */}
+                        {bestPriceEntry && (
+                            <div className="p-3 bg-green-900 rounded-lg border border-green-700 text-green-300 font-semibold text-center">
+                                Best Price: <span className="text-white">${bestPriceEntry.price.toLocaleString(undefined, {minimumFractionDigits: 2})}</span> on <span className="text-yellow-400">{bestPriceEntry.exchange}</span>
+                            </div>
+                        )}
                     </div>
 
-                    {linkedExchanges.map(exchange => (
-                        <div key={exchange.name} className="mt-4 p-4 bg-gray-50 rounded-lg shadow-sm border border-gray-200">
-                             <h3 className="font-semibold text-lg text-gray-800 mb-2 flex justify-between items-center">
-                                {exchange.name} Assets
-                            </h3>
-                            <table className="min-w-full divide-y divide-gray-200">
-                                <thead>
-                                    <tr>
-                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Asset</th>
-                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Value (USD)</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
-                                    {exchange.data.portfolio.map((item, index) => (
-                                        <tr key={index} className="hover:bg-yellow-50">
-                                            <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{item.asset}</td>
-                                            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{item.amount.toFixed(4)}</td>
-                                            <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">${item.valueUSD.toLocaleString()}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                    {/* Right: Price Comparison and Order Buttons */}
+                    <div className="p-6 bg-gray-800 rounded-xl shadow-xl border border-gray-700 space-y-4">
+                        <h3 className="text-xl font-bold text-white mb-4">
+                            Price Comparison for {selectedAsset}
+                        </h3>
+                        
+                        <div className="space-y-3">
+                            {availableExchanges.map((exchangeName) => {
+                                const price = comparisonData[exchangeName];
+                                const isBest = bestPriceEntry && bestPriceEntry.exchange === exchangeName;
+                                
+                                return (
+                                    <div key={exchangeName} className={`p-4 rounded-lg flex justify-between items-center ${isBest ? 'bg-green-800 border-green-500' : 'bg-gray-700 border-gray-600'} border-l-4`}>
+                                        <div>
+                                            <p className={`font-semibold ${isBest ? 'text-white' : 'text-gray-300'}`}>{exchangeName}</p>
+                                            <p className={`text-xl font-bold ${isBest ? 'text-green-300' : 'text-yellow-400'}`}>
+                                                ${price.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => handlePlaceOrder(exchangeName)}
+                                            className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+                                            disabled={!price || tradeAmount <= 0}
+                                        >
+                                            Buy ({tradeAmount})
+                                        </button>
+                                    </div>
+                                );
+                            })}
                         </div>
-                    ))}
+                        {availableExchanges.length === 0 && <p className="text-center py-4 text-gray-500">No linked exchanges trade this asset (simulated).</p>}
+                    </div>
                 </div>
             );
-        }
-
+        };
+        
         // --- Main App Component ---
 
         const App = () => {
@@ -309,38 +686,38 @@
             const [userId, setUserId] = useState('...'); 
             const [isModalVisible, setIsModalVisible] = useState(false);
             const [linkedExchanges, setLinkedExchanges] = useState([]); 
+            const [activeTab, setActiveTab] = useState('Dashboard');
 
-            // Function to show custom message
             const showMessage = (msg, type = 'info') => {
                 setMessage(msg);
                 setMessageType(type);
-                setTimeout(() => setMessage(''), 5000); 
+                // Clear message after 5 seconds
+                const timer = setTimeout(() => setMessage(''), 5000); 
+                return () => clearTimeout(timer);
             };
             
-            // Function to handle connection from modal
             const handleConnectExchange = (name, data) => {
                 setLinkedExchanges(prev => {
-                    const existingIndex = prev.findIndex(e => e.name === name);
-                    if (existingIndex > -1) {
-                        const newState = [...prev];
-                        newState[existingIndex] = { name, data };
-                        return newState;
+                    // Prevent connecting the same mock exchange name twice
+                    if (prev.some(e => e.name === name)) {
+                         showMessage(`${name} is already linked.`, 'error');
+                         return prev;
                     }
                     return [...prev, { name, data }];
                 });
             };
 
-            // Authentication/Loading Check Effect (Simplified to only watch global flags)
+            // Authentication/Loading Check Effect
             useEffect(() => {
                 let interval;
                 
                 if (window.isFirebaseSkipped) {
                     setIsAuthReady(true);
                     setUserId('Local Sandbox User (No Firebase)');
+                    showMessage("Running in local sandbox mode.", 'info');
                     return;
                 }
 
-                // Check global flag set by the module script every 100ms
                 interval = setInterval(() => {
                     if (window.authReady) {
                         clearInterval(interval);
@@ -348,11 +725,6 @@
                         setUserId(window.userId || 'Auth Failed/Timeout');
                         if (window.userId) {
                             showMessage("Dashboard loaded successfully.", 'info');
-                        } else {
-                            // Only show this warning if running in the Canvas
-                            if (window.location.host.includes('canvas')) {
-                                console.warn("Firebase authentication did not complete successfully. Using fallback ID.");
-                            }
                         }
                     }
                 }, 100);
@@ -361,19 +733,51 @@
                 
             }, []); 
 
+            const tabClasses = (tabName) => 
+                `px-6 py-2 font-semibold transition duration-300 rounded-t-lg flex items-center ${
+                    activeTab === tabName 
+                    ? 'bg-gray-800 text-blue-400 border-b-2 border-blue-500' 
+                    : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                }`;
+
+            const renderActiveTab = () => {
+                switch (activeTab) {
+                    case 'Dashboard':
+                        return <DashboardTab linkedExchanges={linkedExchanges} />;
+                    case 'Trade':
+                        return <TradeTab linkedExchanges={linkedExchanges} showMessage={showMessage} />;
+                    case 'AI Analysis':
+                        // Placeholder for future AI integration
+                        return (
+                             <div className="p-8 bg-gray-800 rounded-xl border border-gray-700 text-center space-y-4">
+                                <h3 className="text-2xl font-bold text-white">AI Investment Engine</h3>
+                                <p className="text-gray-400">
+                                    This tab will host the Gemini AI integration for sophisticated portfolio optimization and market forecasting.
+                                </p>
+                                <button className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    <Icon name="bot" className="w-4 h-4 mr-2 inline-block" />
+                                    Launch AI Advisor (Future Feature)
+                                </button>
+                            </div>
+                        );
+                    default:
+                        return null;
+                }
+            }
+
+
             if (!isAuthReady) {
                 return (
-                    <div className="flex flex-col items-center justify-center p-8 bg-white shadow-xl rounded-xl max-w-lg w-full">
+                    <div className="flex flex-col items-center justify-center p-8 bg-gray-800 shadow-2xl rounded-xl max-w-lg w-full border border-blue-700">
                         <Icon name="loader-circle" className="w-8 h-8 animate-spin text-blue-500 mb-4" />
-                        <p className="text-gray-600">Initializing dashboard and authenticating...</p>
-                        <p className="text-sm text-gray-400 mt-2">The live site should load immediately, as Firebase auth is skipped there.</p>
+                        <p className="text-gray-300">Initializing secure MVP dashboard...</p>
+                        <p className="text-sm text-gray-500 mt-2">Authenticating user for persistent data storage.</p>
                     </div>
                 );
             }
 
-            // --- Main Dashboard Render ---
             return (
-                <div className="container max-w-4xl mx-auto p-4 md:p-8 bg-white shadow-2xl rounded-2xl">
+                <div className="container max-w-6xl mx-auto p-0 bg-gray-900 rounded-2xl shadow-[0_20px_50px_rgba(8,_112,_184,_0.7)]">
                     <MessageModal 
                         message={message} 
                         type={messageType} 
@@ -384,74 +788,52 @@
                         onClose={() => setIsModalVisible(false)}
                         onConnect={handleConnectExchange}
                         showMessage={showMessage}
+                        connectedExchanges={linkedExchanges}
                     />
                     
-                    <header className="text-center mb-10">
-                        <h1 className="text-4xl font-extrabold text-gray-800 tracking-tight mb-2">
-                            AI Crypto Dashboard
+                    <header className="p-6 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-2xl">
+                        <h1 className="text-3xl font-extrabold text-blue-400 tracking-wider flex items-center">
+                            <Icon name="rocket" className="w-6 h-6 mr-3 text-yellow-500" />
+                            AI-X QUANT
                         </h1>
-                        <p className="text-md text-blue-500 font-medium">
-                            Simulated Exchange Connectivity & Gemini Analysis
-                        </p>
-                        <div className="mt-4 p-2 bg-gray-50 rounded-lg text-sm text-gray-500 break-words">
-                            <span className="font-semibold text-gray-700">User ID (for persistence):</span> {userId}
+                        <div className="flex items-center space-x-4">
+                            <button
+                                onClick={() => setIsModalVisible(true)}
+                                className="px-4 py-2 bg-yellow-600 text-gray-900 font-bold rounded-lg hover:bg-yellow-500 transition shadow-md flex items-center text-sm"
+                            >
+                                <Icon name="settings-2" className="w-4 h-4 mr-2" />
+                                {linkedExchanges.length} Exchanges Linked
+                            </button>
+                            <span className="text-sm text-gray-500">User: {userId.substring(0, 8)}...</span>
                         </div>
                     </header>
                     
-                    <div className="space-y-8">
-                        
-                        {/* 1. Connect Exchange Button Section */}
-                        <section className="p-6 bg-yellow-50 rounded-xl border border-yellow-200 shadow-inner text-center">
-                             <button
-                                onClick={() => setIsModalVisible(true)}
-                                className="px-8 py-3 bg-yellow-600 text-white font-bold text-lg rounded-xl hover:bg-yellow-700 transition shadow-lg transform hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center mx-auto"
-                            >
-                                <Icon name="link" className="w-6 h-6 mr-3" />
-                                Connect Exchange Accounts
-                            </button>
-                            <p className="mt-3 text-sm text-gray-600">
-                                Currently linked: {linkedExchanges.map(e => e.name).join(', ') || 'None'}
-                            </p>
-                        </section>
+                    {/* Navigation Tabs */}
+                    <nav className="flex border-b border-gray-700 px-6 bg-gray-900">
+                        <button onClick={() => setActiveTab('Dashboard')} className={tabClasses('Dashboard')}>
+                            <Icon name="layout-dashboard" className="w-5 h-5 mr-2" /> Dashboard
+                        </button>
+                        <button onClick={() => setActiveTab('Trade')} className={tabClasses('Trade')}>
+                            <Icon name="trending-up" className="w-5 h-5 mr-2" /> Trade
+                        </button>
+                        <button onClick={() => setActiveTab('AI Analysis')} className={tabClasses('AI Analysis')}>
+                            <Icon name="brain" className="w-5 h-5 mr-2" /> AI Analysis
+                        </button>
+                    </nav>
 
-                        {/* 2. Portfolio Display Section */}
-                        <PortfolioDisplay linkedExchanges={linkedExchanges} />
-
-                        {/* 3. Analysis Input Section */}
-                        <section className="p-6 bg-blue-50 rounded-xl border border-blue-200 shadow-inner">
-                            <h2 className="flex items-center text-2xl font-bold text-gray-700 mb-4">
-                                <Icon name="cpu" className="w-6 h-6 mr-3 text-blue-600" />
-                                AI Investment Analysis
-                            </h2>
-                            <p className="text-gray-600 mb-4">
-                                Ask Gemini to analyze market trends or specific assets.
-                            </p>
-                            
-                            <textarea
-                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition shadow-sm resize-none"
-                                rows="3"
-                                placeholder="E.g., Analyze the recent performance of Bitcoin and Ethereum."
-                            ></textarea>
-                            
-                            <button
-                                className="mt-4 w-full md:w-auto px-6 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition shadow-lg transform hover:scale-[1.01] active:scale-[0.99]"
-                                onClick={() => showMessage("Gemini Analysis feature is ready to be implemented.", 'info')}
-                            >
-                                Run Analysis
-                                <Icon name="trending-up" className="w-4 h-4 ml-2 inline-block" />
-                            </button>
-                        </section>
-                        
-                    </div>
+                    {/* Content Area */}
+                    <main className="p-6 bg-gray-900 min-h-[600px] rounded-b-2xl">
+                        {renderActiveTab()}
+                    </main>
                     
-                    <footer className="mt-10 pt-6 border-t border-gray-200 text-center text-sm text-gray-400">
-                        &copy; 2025 AI Dashboard. This application is a mock-up due to client-side security constraints.
+                    <footer className="py-3 text-center text-xs text-gray-500 border-t border-gray-800 bg-gray-800 rounded-b-2xl">
+                        MVP for Investors: All market data and trading functionality are simulated.
                     </footer>
                 </div>
             );
         };
 
-        // Render the App component once
+        // Render the App component
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
 
