@@ -51,17 +51,19 @@
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // Expose configuration and service getters to the global scope
+        // Expose configuration and service getters to the global scope for the React component
         window.getFirebaseConfig = () => firebaseConfig;
         window.getAppId = () => appId;
         window.getAuth = () => auth;
         window.getDb = () => db;
 
+        let auth, db; // Define auth and db in the wider scope
+
         // Initialize Firebase
         if (Object.keys(firebaseConfig).length > 0) {
             const app = initializeApp(firebaseConfig);
-            const db = getFirestore(app);
-            const auth = getAuth(app);
+            db = getFirestore(app);
+            auth = getAuth(app);
             
             // 1. Attempt to sign in with the custom token
             async function authenticate() {
@@ -97,7 +99,9 @@
             });
         } else {
             console.error("Firebase Configuration is missing. Running without persistent storage.");
-            // If Firebase is missing, we still need to run the app
+            // If Firebase is missing, we still need to run the app. 
+            // We set a flag that the React component can immediately pick up.
+            window.isFirebaseSkipped = true;
             if (window.renderApp) {
                 window.renderApp();
             }
@@ -151,7 +155,7 @@
             const [message, setMessage] = useState('');
             const [messageType, setMessageType] = useState('info');
             const [isAuthReady, setIsAuthReady] = useState(false);
-            const [userId, setUserId] = useState(window.userId || '...'); // Placeholder for user ID
+            const [userId, setUserId] = useState('...'); // Placeholder for user ID
 
             // Function to show custom message
             const showMessage = (msg, type = 'info') => {
@@ -160,37 +164,65 @@
                 setTimeout(() => setMessage(''), 5000); // Auto-hide after 5 seconds
             };
             
+            // Function to set final state and render dashboard
+            const finalizeAuth = (id) => {
+                setUserId(id || 'Local Sandbox User (No Firebase)');
+                setIsAuthReady(true);
+                if (id !== 'N/A') {
+                    showMessage("Dashboard loaded successfully.", 'info');
+                } else {
+                    // Only show this message if running in the Canvas (not on public URL)
+                    if (window.location.host.includes('canvas')) {
+                        showMessage("Running without Firestore persistence.", 'info');
+                    }
+                }
+            };
+            
             // Initialization and Auth Check Effect
             useEffect(() => {
-                // Check if the user ID has been set by the module script
-                const checkAuth = () => {
+                let intervalId;
+                
+                // Case 1: Running outside Canvas (no Firebase config available)
+                if (window.isFirebaseSkipped) {
+                    finalizeAuth("N/A");
+                    return;
+                }
+
+                // Case 2: Running inside Canvas (Firebase setup runs in module script)
+                // The module script will set window.userId and call window.renderApp().
+                
+                // Set up the function that the module script calls after successful sign-in
+                window.renderApp = () => {
                     if (window.userId) {
-                        setUserId(window.userId);
-                        setIsAuthReady(true);
-                        showMessage("User ID linked to Firestore access.", 'info');
+                        finalizeAuth(window.userId);
+                    } else if (window.isFirebaseSkipped) {
+                        finalizeAuth("N/A"); // Fallback check 
                     } else {
-                         // Fallback for immediate check if the module script hasn't finished yet
-                         const authInterval = setInterval(() => {
-                            if (window.userId) {
-                                setUserId(window.userId);
-                                setIsAuthReady(true);
-                                clearInterval(authInterval);
-                            }
-                         }, 100);
-                         // Don't wait forever, just let the app run without Firestore if needed
-                         setTimeout(() => {
-                            if (!window.userId) {
-                                setIsAuthReady(true);
-                            }
-                         }, 1000); 
+                         finalizeAuth("Auth Failed/Pending"); 
                     }
                 };
 
-                checkAuth();
+                // Aggressive interval check to catch race condition in the preview pane
+                intervalId = setInterval(() => {
+                    if (window.userId) {
+                        clearInterval(intervalId);
+                        finalizeAuth(window.userId);
+                    }
+                }, 100);
 
-                // Expose the app logic entry point to the module script
-                window.renderApp = checkAuth;
-
+                // Fallback timeout to prevent infinite loading state if auth fails silently
+                const timeout = setTimeout(() => {
+                    if (!isAuthReady) {
+                         clearInterval(intervalId);
+                         finalizeAuth("Auth Timeout");
+                    }
+                }, 5000);
+                
+                return () => {
+                    clearInterval(intervalId);
+                    clearTimeout(timeout);
+                };
+                
             }, []); // Run once on mount
 
             if (!isAuthReady) {
@@ -198,6 +230,7 @@
                     <div className="flex flex-col items-center justify-center p-8 bg-white shadow-xl rounded-xl max-w-lg w-full">
                         <Icon name="loader-circle" className="w-8 h-8 animate-spin text-blue-500 mb-4" />
                         <p className="text-gray-600">Initializing dashboard and authenticating...</p>
+                        <p className="text-sm text-gray-400 mt-2">If this takes longer than 5 seconds, Firebase may be skipped.</p>
                     </div>
                 );
             }
@@ -293,7 +326,7 @@
         // Function exposed to the module script to trigger rendering after auth
         window.renderApp = () => {
              // We check again in case this function is called immediately before window.userId is set
-             if (!window.userId) {
+             if (!window.userId && !window.isFirebaseSkipped) {
                 // If auth is still pending, we wait for the onAuthStateChanged listener to call renderApp again.
                 // For now, render the App component with the loading state.
                 root.render(<App />);
