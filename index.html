@@ -154,37 +154,38 @@
 
         // --- Shared Components ---
 
-        // FIX: The Icon component must use a ref and useEffect to handle the external DOM manipulation 
-        // by the Lucide script, preventing React cleanup errors.
+        // NEW FIX: Use dangerouslySetInnerHTML with the raw SVG string from Lucide, 
+        // avoiding Lucide's direct DOM manipulation methods (createIcons), 
+        // which caused reconciliation errors.
         const Icon = ({ name, className }) => {
-            const iconRef = useRef(null);
-            
+            const [svgMarkup, setSvgMarkup] = useState('');
+
             useEffect(() => {
-                const container = iconRef.current;
-                if (container && typeof lucide !== 'undefined') {
-                    // 1. Clear previous content (the old SVG) to handle re-renders
-                    container.innerHTML = '';
-                    
-                    // 2. Set the lucide attribute on the container
-                    container.setAttribute('data-lucide', name);
-                    
-                    // 3. Create the icon, passing the class to be applied to the SVG
-                    // We use the parent element's scope to ensure the single icon is created
-                    lucide.createIcons({
-                        attributes: { class: className },
-                        scope: container.parentElement
-                    });
-
-                    return () => {
-                        // Cleanup function: remove the generated SVG from the container
-                        container.innerHTML = '';
-                    };
+                // Check if the Lucide library is loaded and the icon exists
+                if (typeof lucide === 'undefined' || !lucide.icons[name]) {
+                    console.error(`Lucide icon '${name}' not found.`);
+                    setSvgMarkup('');
+                    return;
                 }
-            }, [name, className]); 
 
-            // React manages the <span>. Lucide mutates its content.
-            // We apply an initial class for sizing/placement if needed, but the main styling is passed to the SVG via attributes.
-            return <span ref={iconRef} className={className} />;
+                // Generate the raw SVG string using Lucide's toSvg method
+                // We pass the className here for styling
+                const markup = lucide.icons[name].toSvg({
+                    class: className
+                });
+                
+                setSvgMarkup(markup);
+
+            }, [name, className]);
+
+            // React renders the span and safely injects the SVG markup string 
+            // via dangerouslySetInnerHTML, eliminating the DOM conflict.
+            return (
+                <span 
+                    className={className} 
+                    dangerouslySetInnerHTML={{ __html: svgMarkup }} 
+                />
+            );
         };
 
         const MessageModal = ({ message, type, onClose }) => {
@@ -487,7 +488,7 @@
 
                         {/* KPI 2: Number of Assets */}
                         <div className="p-5 bg-gray-800 rounded-xl shadow-xl border border-gray-700">
-                            <p className="text-gray-400 text-sm">Assets Managed</p>
+                            <p className className="text-gray-400 text-sm">Assets Managed</p>
                             <h3 className="text-3xl font-extrabold text-white mt-1">
                                 {sortedBreakdown.length}
                             </h3>
