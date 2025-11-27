@@ -26,6 +26,7 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <!-- Load Lucide Icons -->
+    <!-- We load the icons here and let them process the DOM once, preventing conflicts -->
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
@@ -42,18 +43,14 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Set Firestore log level for debugging
         setLogLevel('debug');
 
-        // Global variables provided by the canvas environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        window.getFirebaseConfig = () => firebaseConfig;
-        window.getAppId = () => appId;
-        window.getAuth = () => auth;
-        window.getDb = () => db;
+        window.authReady = false; // Global flag for React to watch
+        window.userId = null;
 
         let auth, db; 
 
@@ -74,26 +71,22 @@
                     }
                 } catch (error) {
                     console.error("Firebase Auth error:", error);
+                    window.authReady = true; // Still flag as ready even on error
                 }
             }
 
             onAuthStateChanged(auth, (user) => {
                 if (user) {
                     window.userId = user.uid; 
-                    if (window.renderApp) {
-                        window.renderApp();
-                    }
+                    window.authReady = true; // Authentication successful
                 } else {
-                    authenticate();
+                    authenticate(); // Trigger sign-in if not signed in
                 }
             });
         } else {
             console.error("Firebase Configuration is missing. Running without persistent storage.");
-            // Signal to React to skip auth check and render immediately
             window.isFirebaseSkipped = true;
-            if (window.renderApp) {
-                window.renderApp();
-            }
+            window.authReady = true;
         }
     </script>
 
@@ -142,12 +135,8 @@
             );
         };
         
+        // Stabilized Icon component: relies purely on the global Lucide script loaded in the <head>
         const Icon = ({ name, className }) => {
-            useEffect(() => {
-                if (typeof lucide !== 'undefined') {
-                    lucide.createIcons();
-                }
-            }, [name]);
             return <i data-lucide={name} className={className} />;
         };
 
@@ -171,15 +160,12 @@
 
                 // Simulate secure API call delay
                 setTimeout(() => {
-                    // In a real app, this would be the secure server call.
-                    // Here, we save the simulated credentials (API key/secret) and fetch mock data.
                     onConnect(selectedExchange, { apiKey, apiSecret, portfolio: MOCK_PORTFOLIOS[selectedExchange] });
                     showMessage(`Successfully connected and fetched simulated data from ${selectedExchange}.`, 'info');
                     
                     setIsLoading(false);
                     onClose();
                     
-                    // Reset fields after successful connection
                     setApiKey('');
                     setApiSecret('');
                 }, 1500);
@@ -322,7 +308,7 @@
             const [isAuthReady, setIsAuthReady] = useState(false);
             const [userId, setUserId] = useState('...'); 
             const [isModalVisible, setIsModalVisible] = useState(false);
-            const [linkedExchanges, setLinkedExchanges] = useState([]); // Stores linked exchange data
+            const [linkedExchanges, setLinkedExchanges] = useState([]); 
 
             // Function to show custom message
             const showMessage = (msg, type = 'info') => {
@@ -334,84 +320,58 @@
             // Function to handle connection from modal
             const handleConnectExchange = (name, data) => {
                 setLinkedExchanges(prev => {
-                    // Check if already linked, replace if so
                     const existingIndex = prev.findIndex(e => e.name === name);
                     if (existingIndex > -1) {
                         const newState = [...prev];
                         newState[existingIndex] = { name, data };
                         return newState;
                     }
-                    // Otherwise, add new
                     return [...prev, { name, data }];
                 });
             };
 
-            // Function to set final state and render dashboard
-            const finalizeAuth = (id) => {
-                setUserId(id || 'Local Sandbox User (No Firebase)');
-                setIsAuthReady(true);
-                if (id !== 'N/A' && id !== 'Auth Timeout') {
-                    showMessage("Dashboard loaded successfully.", 'info');
-                } else if (window.location.host.includes('canvas')) {
-                    // Show a less alarming message in the preview
-                    showMessage("Running without Firestore persistence.", 'info');
-                }
-            };
-            
-            // Initialization and Auth Check Effect (Robust check for Canvas preview)
+            // Authentication/Loading Check Effect (Simplified to only watch global flags)
             useEffect(() => {
-                let intervalId;
+                let interval;
                 
-                // Case 1: Running outside Canvas (skip Firebase)
                 if (window.isFirebaseSkipped) {
-                    finalizeAuth("N/A");
+                    setIsAuthReady(true);
+                    setUserId('Local Sandbox User (No Firebase)');
                     return;
                 }
 
-                // Setup function called by the module script after successful sign-in
-                window.renderApp = () => {
-                    if (window.userId) {
-                        finalizeAuth(window.userId);
-                    } else if (window.isFirebaseSkipped) {
-                        finalizeAuth("N/A"); 
-                    } else {
-                         finalizeAuth("Auth Failed/Pending"); 
-                    }
-                };
-
-                // Aggressive interval check to catch race condition in the preview pane
-                intervalId = setInterval(() => {
-                    if (window.userId) {
-                        clearInterval(intervalId);
-                        finalizeAuth(window.userId);
+                // Check global flag set by the module script every 100ms
+                interval = setInterval(() => {
+                    if (window.authReady) {
+                        clearInterval(interval);
+                        setIsAuthReady(true);
+                        setUserId(window.userId || 'Auth Failed/Timeout');
+                        if (window.userId) {
+                            showMessage("Dashboard loaded successfully.", 'info');
+                        } else {
+                            // Only show this warning if running in the Canvas
+                            if (window.location.host.includes('canvas')) {
+                                console.warn("Firebase authentication did not complete successfully. Using fallback ID.");
+                            }
+                        }
                     }
                 }, 100);
 
-                // Fallback timeout to prevent infinite loading state
-                const timeout = setTimeout(() => {
-                    if (!isAuthReady) {
-                         clearInterval(intervalId);
-                         finalizeAuth("Auth Timeout");
-                    }
-                }, 5000);
+                return () => clearInterval(interval);
                 
-                return () => {
-                    clearInterval(intervalId);
-                    clearTimeout(timeout);
-                };
-                
-            }, []); // Run once on mount
+            }, []); 
 
             if (!isAuthReady) {
                 return (
                     <div className="flex flex-col items-center justify-center p-8 bg-white shadow-xl rounded-xl max-w-lg w-full">
                         <Icon name="loader-circle" className="w-8 h-8 animate-spin text-blue-500 mb-4" />
                         <p className="text-gray-600">Initializing dashboard and authenticating...</p>
-                        <p className="text-sm text-gray-400 mt-2">If this persists, check the developer console for Firebase errors.</p>
+                        <p className="text-sm text-gray-400 mt-2">The live site should load immediately, as Firebase auth is skipped there.</p>
                     </div>
                 );
             }
 
+            // --- Main Dashboard Render ---
             return (
                 <div className="container max-w-4xl mx-auto p-4 md:p-8 bg-white shadow-2xl rounded-2xl">
                     <MessageModal 
@@ -491,19 +451,8 @@
             );
         };
 
-        // Render the App component
+        // Render the App component once
         const root = ReactDOM.createRoot(document.getElementById('root'));
-
-        // Function exposed to the module script to trigger rendering after auth
-        window.renderApp = () => {
-             if (!window.userId && !window.isFirebaseSkipped) {
-                root.render(<App />);
-                return;
-             }
-             root.render(<App />);
-        }
-
-        // Initial render (will show loading state if window.userId is not yet available)
         root.render(<App />);
 
     </script>
