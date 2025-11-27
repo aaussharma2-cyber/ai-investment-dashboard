@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simplified Investment Dashboard</title>
+    <title>AI Investment Dashboard</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Custom CSS for font and general styling -->
@@ -16,7 +16,7 @@
         #root {
             display: flex;
             justify-content: center;
-            align-items: flex-start; /* Align to the top of the viewport */
+            align-items: flex-start;
             min-height: 100vh;
             padding: 2rem 1rem;
         }
@@ -36,7 +36,6 @@
 
     <!-- 
         Firebase Initialization and Authentication (Standard Module) 
-        This part remains a standard JS module type="module" for ES imports.
     -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -51,13 +50,12 @@
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // Expose configuration and service getters to the global scope for the React component
         window.getFirebaseConfig = () => firebaseConfig;
         window.getAppId = () => appId;
         window.getAuth = () => auth;
         window.getDb = () => db;
 
-        let auth, db; // Define auth and db in the wider scope
+        let auth, db; 
 
         // Initialize Firebase
         if (Object.keys(firebaseConfig).length > 0) {
@@ -65,7 +63,6 @@
             db = getFirestore(app);
             auth = getAuth(app);
             
-            // 1. Attempt to sign in with the custom token
             async function authenticate() {
                 try {
                     if (initialAuthToken) {
@@ -80,27 +77,19 @@
                 }
             }
 
-            // 2. Set up auth state change listener and run the app
             onAuthStateChanged(auth, (user) => {
                 if (user) {
-                    // User is signed in. We can now run the main React component.
-                    console.log("User authenticated. UID:", user.uid);
-                    // Set global state that React can monitor
                     window.userId = user.uid; 
-                    // Trigger rendering in the React/Babel script block
                     if (window.renderApp) {
                         window.renderApp();
                     }
                 } else {
-                    // User is signed out (this happens after the initial sign-in attempt if the token is invalid or not available)
-                    console.log("User signed out. Attempting sign-in...");
                     authenticate();
                 }
             });
         } else {
             console.error("Firebase Configuration is missing. Running without persistent storage.");
-            // If Firebase is missing, we still need to run the app. 
-            // We set a flag that the React component can immediately pick up.
+            // Signal to React to skip auth check and render immediately
             window.isFirebaseSkipped = true;
             if (window.renderApp) {
                 window.renderApp();
@@ -111,10 +100,9 @@
 
     <!-- 
         Main Application Logic (React Component)
-        *** THIS SCRIPT MUST HAVE type="text/babel" for JSX to be processed by Babel. ***
     -->
     <script type="text/babel">
-        const { useState, useEffect, useCallback } = React;
+        const { useState, useEffect } = React;
 
         // Mock data for simulated exchange portfolios
         const MOCK_PORTFOLIOS = {
@@ -127,13 +115,11 @@
                 { asset: 'ADA', amount: 1200, valueUSD: 800 },
                 { asset: 'DOT', amount: 450, valueUSD: 3200 },
                 { asset: 'XRP', amount: 5000, valueUSD: 2500 },
-            ],
-            'Other': [
-                { asset: 'SOL', amount: 10, valueUSD: 1800 },
             ]
         };
+        
+        // --- Shared Components ---
 
-        // Simple component to display a message box instead of alert()
         const MessageModal = ({ message, type, onClose }) => {
             if (!message) return null;
 
@@ -156,10 +142,8 @@
             );
         };
         
-        // Icon wrapper for Lucide icons
         const Icon = ({ name, className }) => {
             useEffect(() => {
-                // Ensure lucide is defined before attempting to replace icons
                 if (typeof lucide !== 'undefined') {
                     lucide.createIcons();
                 }
@@ -167,107 +151,144 @@
             return <i data-lucide={name} className={className} />;
         };
 
-        // Exchange Management Component
-        const ExchangeManager = ({ showMessage }) => {
+        // --- Exchange Connection Modal (The "Popup") ---
+
+        const ConnectExchangeModal = ({ isVisible, onClose, onConnect, showMessage }) => {
             const [selectedExchange, setSelectedExchange] = useState('Binance');
             const [apiKey, setApiKey] = useState('');
             const [apiSecret, setApiSecret] = useState('');
-            const [portfolio, setPortfolio] = useState([]);
             const [isLoading, setIsLoading] = useState(false);
 
-            const handleFetch = () => {
+            if (!isVisible) return null;
+
+            const handleConnect = () => {
                 if (!apiKey || !apiSecret) {
-                    showMessage('Please enter both API Key and API Secret to simulate connection.', 'error');
+                    showMessage('Please enter both API Key and API Secret.', 'error');
                     return;
                 }
                 
                 setIsLoading(true);
-                setPortfolio([]);
 
                 // Simulate secure API call delay
                 setTimeout(() => {
-                    const mockData = MOCK_PORTFOLIOS[selectedExchange] || MOCK_PORTFOLIOS['Other'];
-                    setPortfolio(mockData);
-                    const totalValue = mockData.reduce((sum, asset) => sum + asset.valueUSD, 0);
-                    showMessage(`Successfully fetched simulated data from ${selectedExchange}. Total value: $${totalValue.toLocaleString()}.`, 'info');
+                    // In a real app, this would be the secure server call.
+                    // Here, we save the simulated credentials (API key/secret) and fetch mock data.
+                    onConnect(selectedExchange, { apiKey, apiSecret, portfolio: MOCK_PORTFOLIOS[selectedExchange] });
+                    showMessage(`Successfully connected and fetched simulated data from ${selectedExchange}.`, 'info');
+                    
                     setIsLoading(false);
+                    onClose();
+                    
+                    // Reset fields after successful connection
+                    setApiKey('');
+                    setApiSecret('');
                 }, 1500);
             };
 
-            const totalPortfolioValue = portfolio.reduce((sum, asset) => sum + asset.valueUSD, 0).toLocaleString();
-
             return (
-                <section className="p-6 bg-yellow-50 rounded-xl border border-yellow-200 shadow-inner">
-                    <h2 className="flex items-center text-2xl font-bold text-gray-700 mb-4">
-                        <Icon name="link" className="w-6 h-6 mr-3 text-yellow-600" />
-                        Link Exchange Accounts (Simulated)
-                    </h2>
-                    <p className="text-gray-600 mb-4">
-                        Select an exchange and provide simulated credentials. Data fetching is mocked due to client-side security restrictions.
-                    </p>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                        <div className="md:col-span-1">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Exchange</label>
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-70 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4 transform transition-all scale-100">
+                        <h3 className="text-2xl font-bold text-gray-800 flex items-center">
+                            <Icon name="plug-zap" className="w-6 h-6 mr-3 text-yellow-600" />
+                            Connect Cryptocurrency Exchange
+                        </h3>
+                        <p className="text-gray-600 text-sm">
+                            **IMPORTANT:** Due to security and environment constraints, this connection is **simulated**. Do not enter real API keys.
+                        </p>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Select Platform</label>
                             <select
                                 value={selectedExchange}
-                                onChange={(e) => {
-                                    setSelectedExchange(e.target.value);
-                                    setPortfolio([]);
-                                    setApiKey('');
-                                    setApiSecret('');
-                                }}
-                                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-yellow-500 focus:border-yellow-500 transition"
+                                onChange={(e) => setSelectedExchange(e.target.value)}
+                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
                             >
                                 <option>Binance</option>
                                 <option>CoinSpot</option>
                             </select>
                         </div>
-                        <div className="md:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">API Key (Simulated)</label>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">API Key (Mock)</label>
                             <input
                                 type="password"
                                 value={apiKey}
                                 onChange={(e) => setApiKey(e.target.value)}
-                                placeholder="Paste your API Key here"
-                                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-yellow-500 focus:border-yellow-500 transition"
+                                placeholder="Enter Simulated API Key"
+                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
                             />
                         </div>
-                    </div>
-                    <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">API Secret (Simulated)</label>
-                        <input
-                            type="password"
-                            value={apiSecret}
-                            onChange={(e) => setApiSecret(e.target.value)}
-                            placeholder="Paste your API Secret here"
-                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-yellow-500 focus:border-yellow-500 transition"
-                        />
-                    </div>
-                    
-                    <button
-                        onClick={handleFetch}
-                        disabled={isLoading}
-                        className="w-full px-6 py-3 bg-yellow-600 text-white font-semibold rounded-xl hover:bg-yellow-700 transition shadow-lg transform hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 flex items-center justify-center"
-                    >
-                        {isLoading ? (
-                            <>
-                                <Icon name="loader-circle" className="w-4 h-4 mr-2 animate-spin" />
-                                Fetching Data...
-                            </>
-                        ) : (
-                            <>
-                                Fetch Portfolio Data from {selectedExchange}
-                                <Icon name="arrow-right" className="w-4 h-4 ml-2" />
-                            </>
-                        )}
-                    </button>
 
-                    {portfolio.length > 0 && (
-                        <div className="mt-6 p-4 bg-white rounded-lg border border-gray-200 shadow-md">
-                            <h3 className="font-semibold text-lg text-gray-800 mb-2 flex justify-between items-center">
-                                {selectedExchange} Portfolio
-                                <span className="text-xl font-bold text-green-600">${totalPortfolioValue}</span>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">API Secret (Mock)</label>
+                            <input
+                                type="password"
+                                value={apiSecret}
+                                onChange={(e) => setApiSecret(e.target.value)}
+                                placeholder="Enter Simulated API Secret"
+                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition"
+                            />
+                        </div>
+
+                        <div className="flex justify-end space-x-3 pt-2">
+                            <button
+                                onClick={onClose}
+                                disabled={isLoading}
+                                className="px-6 py-2 border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 transition disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConnect}
+                                disabled={isLoading}
+                                className="px-6 py-2 bg-yellow-600 text-white font-semibold rounded-lg hover:bg-yellow-700 transition shadow-md disabled:opacity-50 flex items-center"
+                            >
+                                {isLoading ? (
+                                    <>
+                                        <Icon name="loader-circle" className="w-4 h-4 mr-2 animate-spin" />
+                                        Connecting...
+                                    </>
+                                ) : (
+                                    'Connect & Fetch Data'
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Portfolio Display Component ---
+
+        const PortfolioDisplay = ({ linkedExchanges }) => {
+            const allAssets = linkedExchanges.flatMap(e => e.data.portfolio);
+            if (allAssets.length === 0) {
+                return (
+                    <div className="text-center p-8 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                        <Icon name="cloud-off" className="w-8 h-8 mx-auto text-gray-400 mb-2" />
+                        <p className="text-gray-500">No exchange accounts linked yet.</p>
+                        <p className="text-sm text-gray-400">Use the "Connect Exchange" button to start fetching simulated data.</p>
+                    </div>
+                );
+            }
+
+            const totalValue = allAssets.reduce((sum, asset) => sum + asset.valueUSD, 0);
+
+            return (
+                <div className="p-6 bg-green-50 rounded-xl border border-green-200 shadow-inner">
+                    <h2 className="flex items-center text-2xl font-bold text-gray-700 mb-4">
+                        <Icon name="wallet" className="w-6 h-6 mr-3 text-green-600" />
+                        Consolidated Portfolio Overview
+                    </h2>
+                    <div className="bg-white p-4 rounded-lg shadow-md mb-4 flex justify-between items-center border-l-4 border-green-500">
+                        <span className="text-lg font-semibold text-gray-700">Total Portfolio Value:</span>
+                        <span className="text-3xl font-extrabold text-green-600">${totalValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                    </div>
+
+                    {linkedExchanges.map(exchange => (
+                        <div key={exchange.name} className="mt-4 p-4 bg-gray-50 rounded-lg shadow-sm border border-gray-200">
+                             <h3 className="font-semibold text-lg text-gray-800 mb-2 flex justify-between items-center">
+                                {exchange.name} Assets
                             </h3>
                             <table className="min-w-full divide-y divide-gray-200">
                                 <thead>
@@ -278,68 +299,81 @@
                                     </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                    {portfolio.map((item, index) => (
-                                        <tr key={index} className="hover:bg-gray-50">
+                                    {exchange.data.portfolio.map((item, index) => (
+                                        <tr key={index} className="hover:bg-yellow-50">
                                             <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{item.asset}</td>
-                                            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{item.amount.toFixed(2)}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{item.amount.toFixed(4)}</td>
                                             <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">${item.valueUSD.toLocaleString()}</td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
                         </div>
-                    )}
-                </section>
+                    ))}
+                </div>
             );
-        };
+        }
 
-        // Main App Component
+        // --- Main App Component ---
+
         const App = () => {
             const [message, setMessage] = useState('');
             const [messageType, setMessageType] = useState('info');
             const [isAuthReady, setIsAuthReady] = useState(false);
-            const [userId, setUserId] = useState('...'); // Placeholder for user ID
+            const [userId, setUserId] = useState('...'); 
+            const [isModalVisible, setIsModalVisible] = useState(false);
+            const [linkedExchanges, setLinkedExchanges] = useState([]); // Stores linked exchange data
 
             // Function to show custom message
             const showMessage = (msg, type = 'info') => {
                 setMessage(msg);
                 setMessageType(type);
-                setTimeout(() => setMessage(''), 5000); // Auto-hide after 5 seconds
+                setTimeout(() => setMessage(''), 5000); 
             };
             
+            // Function to handle connection from modal
+            const handleConnectExchange = (name, data) => {
+                setLinkedExchanges(prev => {
+                    // Check if already linked, replace if so
+                    const existingIndex = prev.findIndex(e => e.name === name);
+                    if (existingIndex > -1) {
+                        const newState = [...prev];
+                        newState[existingIndex] = { name, data };
+                        return newState;
+                    }
+                    // Otherwise, add new
+                    return [...prev, { name, data }];
+                });
+            };
+
             // Function to set final state and render dashboard
             const finalizeAuth = (id) => {
                 setUserId(id || 'Local Sandbox User (No Firebase)');
                 setIsAuthReady(true);
-                if (id !== 'N/A') {
+                if (id !== 'N/A' && id !== 'Auth Timeout') {
                     showMessage("Dashboard loaded successfully.", 'info');
-                } else {
-                    // Only show this message if running in the Canvas (not on public URL)
-                    if (window.location.host.includes('canvas')) {
-                        showMessage("Running without Firestore persistence.", 'info');
-                    }
+                } else if (window.location.host.includes('canvas')) {
+                    // Show a less alarming message in the preview
+                    showMessage("Running without Firestore persistence.", 'info');
                 }
             };
             
-            // Initialization and Auth Check Effect
+            // Initialization and Auth Check Effect (Robust check for Canvas preview)
             useEffect(() => {
                 let intervalId;
                 
-                // Case 1: Running outside Canvas (no Firebase config available)
+                // Case 1: Running outside Canvas (skip Firebase)
                 if (window.isFirebaseSkipped) {
                     finalizeAuth("N/A");
                     return;
                 }
 
-                // Case 2: Running inside Canvas (Firebase setup runs in module script)
-                // The module script will set window.userId and call window.renderApp().
-                
-                // Set up the function that the module script calls after successful sign-in
+                // Setup function called by the module script after successful sign-in
                 window.renderApp = () => {
                     if (window.userId) {
                         finalizeAuth(window.userId);
                     } else if (window.isFirebaseSkipped) {
-                        finalizeAuth("N/A"); // Fallback check 
+                        finalizeAuth("N/A"); 
                     } else {
                          finalizeAuth("Auth Failed/Pending"); 
                     }
@@ -353,7 +387,7 @@
                     }
                 }, 100);
 
-                // Fallback timeout to prevent infinite loading state if auth fails silently
+                // Fallback timeout to prevent infinite loading state
                 const timeout = setTimeout(() => {
                     if (!isAuthReady) {
                          clearInterval(intervalId);
@@ -373,7 +407,7 @@
                     <div className="flex flex-col items-center justify-center p-8 bg-white shadow-xl rounded-xl max-w-lg w-full">
                         <Icon name="loader-circle" className="w-8 h-8 animate-spin text-blue-500 mb-4" />
                         <p className="text-gray-600">Initializing dashboard and authenticating...</p>
-                        <p className="text-sm text-gray-400 mt-2">If this takes longer than 5 seconds, Firebase may be skipped.</p>
+                        <p className="text-sm text-gray-400 mt-2">If this persists, check the developer console for Firebase errors.</p>
                     </div>
                 );
             }
@@ -385,13 +419,19 @@
                         type={messageType} 
                         onClose={() => setMessage('')} 
                     />
+                    <ConnectExchangeModal
+                        isVisible={isModalVisible}
+                        onClose={() => setIsModalVisible(false)}
+                        onConnect={handleConnectExchange}
+                        showMessage={showMessage}
+                    />
                     
                     <header className="text-center mb-10">
                         <h1 className="text-4xl font-extrabold text-gray-800 tracking-tight mb-2">
-                            AI Investment Dashboard
+                            AI Crypto Dashboard
                         </h1>
                         <p className="text-md text-blue-500 font-medium">
-                            Powered by Gemini Analysis and Simulated Exchange Connectivity
+                            Simulated Exchange Connectivity & Gemini Analysis
                         </p>
                         <div className="mt-4 p-2 bg-gray-50 rounded-lg text-sm text-gray-500 break-words">
                             <span className="font-semibold text-gray-700">User ID (for persistence):</span> {userId}
@@ -400,81 +440,63 @@
                     
                     <div className="space-y-8">
                         
-                        {/* 1. Exchange Linkage Section (New) */}
-                        <ExchangeManager showMessage={showMessage} />
+                        {/* 1. Connect Exchange Button Section */}
+                        <section className="p-6 bg-yellow-50 rounded-xl border border-yellow-200 shadow-inner text-center">
+                             <button
+                                onClick={() => setIsModalVisible(true)}
+                                className="px-8 py-3 bg-yellow-600 text-white font-bold text-lg rounded-xl hover:bg-yellow-700 transition shadow-lg transform hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center mx-auto"
+                            >
+                                <Icon name="link" className="w-6 h-6 mr-3" />
+                                Connect Exchange Accounts
+                            </button>
+                            <p className="mt-3 text-sm text-gray-600">
+                                Currently linked: {linkedExchanges.map(e => e.name).join(', ') || 'None'}
+                            </p>
+                        </section>
 
-                        {/* 2. Analysis Input Section */}
+                        {/* 2. Portfolio Display Section */}
+                        <PortfolioDisplay linkedExchanges={linkedExchanges} />
+
+                        {/* 3. Analysis Input Section */}
                         <section className="p-6 bg-blue-50 rounded-xl border border-blue-200 shadow-inner">
                             <h2 className="flex items-center text-2xl font-bold text-gray-700 mb-4">
-                                <Icon name="trending-up" className="w-6 h-6 mr-3 text-blue-600" />
-                                Get Real-Time Investment Analysis
+                                <Icon name="cpu" className="w-6 h-6 mr-3 text-blue-600" />
+                                AI Investment Analysis
                             </h2>
                             <p className="text-gray-600 mb-4">
-                                Ask Gemini to analyze a stock, market trend, or financial report. For current data, analysis will be grounded in Google Search results.
+                                Ask Gemini to analyze market trends or specific assets.
                             </p>
                             
                             <textarea
                                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition shadow-sm resize-none"
                                 rows="3"
-                                placeholder="E.g., Summarize the latest quarterly earnings report for Google and provide a buy/sell/hold recommendation."
+                                placeholder="E.g., Analyze the recent performance of Bitcoin and Ethereum."
                             ></textarea>
                             
                             <button
                                 className="mt-4 w-full md:w-auto px-6 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition shadow-lg transform hover:scale-[1.01] active:scale-[0.99]"
-                                onClick={() => showMessage("Analysis Feature not yet implemented.", 'info')}
+                                onClick={() => showMessage("Gemini Analysis feature is ready to be implemented.", 'info')}
                             >
                                 Run Analysis
-                                <Icon name="cpu" className="w-4 h-4 ml-2 inline-block" />
+                                <Icon name="trending-up" className="w-4 h-4 ml-2 inline-block" />
                             </button>
-                        </section>
-
-                        {/* 3. Portfolio/Saved Data Section (Mock) */}
-                        <section className="p-6 bg-green-50 rounded-xl border border-green-200 shadow-inner">
-                            <h2 className="flex items-center text-2xl font-bold text-gray-700 mb-4">
-                                <Icon name="wallet" className="w-6 h-6 mr-3 text-green-600" />
-                                Consolidated Portfolio Metrics
-                            </h2>
-                            <p className="text-gray-600 mb-4">
-                                This section summarizes all linked accounts and will use Firestore to save your analysis notes.
-                            </p>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-md">
-                                    <h3 className="font-semibold text-lg text-gray-800">Watchlist</h3>
-                                    <ul className="list-disc list-inside text-gray-600 mt-2">
-                                        <li>GOOGL (Last Analysis: Buy)</li>
-                                        <li>TSLA (Last Analysis: Hold)</li>
-                                    </ul>
-                                </div>
-                                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-md">
-                                    <h3 className="font-semibold text-lg text-gray-800">Key Metrics</h3>
-                                    <p className="text-gray-600">Last Synced: 5 min ago</p>
-                                    <p className="text-sm text-green-500 font-bold mt-2">
-                                        Total Portfolio Change: +1.2%
-                                    </p>
-                                </div>
-                            </div>
-
                         </section>
                         
                     </div>
                     
                     <footer className="mt-10 pt-6 border-t border-gray-200 text-center text-sm text-gray-400">
-                        &copy; 2025 AI Dashboard. All rights reserved. Mock-up functionality.
+                        &copy; 2025 AI Dashboard. This application is a mock-up due to client-side security constraints.
                     </footer>
                 </div>
             );
         };
 
-        // Render the App component once authentication is ready (or immediately if Firebase is skipped)
+        // Render the App component
         const root = ReactDOM.createRoot(document.getElementById('root'));
 
         // Function exposed to the module script to trigger rendering after auth
         window.renderApp = () => {
-             // We check again in case this function is called immediately before window.userId is set
              if (!window.userId && !window.isFirebaseSkipped) {
-                // If auth is still pending, we wait for the onAuthStateChanged listener to call renderApp again.
-                // For now, render the App component with the loading state.
                 root.render(<App />);
                 return;
              }
@@ -482,7 +504,6 @@
         }
 
         // Initial render (will show loading state if window.userId is not yet available)
-        // The module script's onAuthStateChanged listener will call window.renderApp when ready.
         root.render(<App />);
 
     </script>
